@@ -79,7 +79,6 @@ def font(size, bold=False):
 
 
 F_TITLE = font(38, True)
-F_SUB = font(38, False)
 F_TILE = font(78, True)
 F_KEY = font(32, True)
 F_HANDLE = font(42, True)
@@ -217,14 +216,13 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    draw.text((W / 2, 160), title, font=F_TITLE, fill=MUTED, anchor="mm")
-    draw.text((W / 2, 212), subtitle, font=F_SUB, fill=MUTED, anchor="mm")
+    draw.text((W / 2, 178), f"{title} • {subtitle}", font=F_TITLE, fill=MUTED, anchor="mm")
 
     tile = 118
     gap = 10
     grid_w = 5 * tile + 4 * gap
     start_x = (W - grid_w) // 2
-    start_y = 300
+    start_y = 285
 
     visible_guesses = guesses[: active_row + 1]
     scores = [score_guess(g, answer) for g in visible_guesses]
