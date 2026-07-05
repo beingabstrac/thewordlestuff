@@ -7,8 +7,10 @@ import random
 import shutil
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
 import wave
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -17,8 +19,9 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs"
 WORDS_FILE = ROOT / "data" / "words.json"
-VIDEO_OUT = OUT / "thewordstuff_mvp.mp4"
-STORY_OUT = OUT / "thewordstuff_storyboard.json"
+VIDEO_OUT = OUT / "thewordlestuff_mvp.mp4"
+STORY_OUT = OUT / "thewordlestuff_storyboard.json"
+START_DATE = date(2021, 6, 19)
 
 W, H = 1080, 1920
 FPS = 30
@@ -33,11 +36,7 @@ KEY_BG = "#d3d6da"
 
 KEY_ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"]
 
-VOICE_OPENERS = [
-    "Five letter word of the day.",
-    "Let's see if we can get this one.",
-    "Okay, new word today.",
-]
+VOICE_OPENERS = ["Let's solve this one.", "Okay, new puzzle.", "Let's see if we can get it."]
 
 VOICE_REACTIONS = {
     "miss": ["That did not help much.", "Rough start, but we learned what is not in it.", "Okay, mostly clearing letters."],
@@ -73,10 +72,31 @@ F_KEY = font(30, True)
 F_HANDLE = font(42, True)
 
 
-def today_index(total):
-    seed = os.getenv("WORD_INDEX") or date.today().isoformat()
-    digest = hashlib.sha256(seed.encode()).hexdigest()
-    return int(digest[:10], 16) % total
+def puzzle_date():
+    raw = os.getenv("WORDLE_DATE")
+    if raw:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    offset = int(os.getenv("WORDLE_OFFSET", "0"))
+    return START_DATE + timedelta(days=offset)
+
+
+def pretty_date(value):
+    return value.strftime("%B %-d, %Y") if os.name != "nt" else value.strftime("%B %#d, %Y")
+
+
+def fetch_wordle_puzzle(value):
+    url = f"https://www.nytimes.com/svc/wordle/v2/{value.isoformat()}.json"
+    req = urllib.request.Request(url, headers={"User-Agent": "thewordlestuff-mvp/0.1"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Wordle puzzle unavailable for {value.isoformat()}: HTTP {exc.code}") from exc
+    return {
+        "id": int(data.get("id") or (value - START_DATE).days + 1),
+        "answer": data["solution"].upper(),
+        "date": data.get("print_date", value.isoformat()),
+    }
 
 
 def score_guess(guess, answer):
@@ -227,7 +247,7 @@ def draw_frame(guesses, answer, reveal_row, reveal_letters, title, subtitle):
             draw.rounded_rectangle((x, y, x + key_w, y + key_h), radius=8, fill=fill)
             text_center(draw, (x, y, key_w, key_h), ch, F_KEY, "#ffffff" if state else TEXT)
 
-    draw.text((W / 2, 1638), "@thewordstuff", font=F_HANDLE, fill="#111111", anchor="mm")
+    draw.text((W / 2, 1638), "@thewordlestuff", font=F_HANDLE, fill="#111111", anchor="mm")
     return img
 
 
@@ -283,10 +303,14 @@ def render_video(frames_dir, audio_path, total_frames):
 def main():
     OUT.mkdir(exist_ok=True)
     words = load_words()
-    answer = words["answers"][today_index(len(words["answers"]))].upper()
+    requested_date = puzzle_date()
+    puzzle = fetch_wordle_puzzle(requested_date)
+    answer = puzzle["answer"]
+    title = f"WORDLE #{puzzle['id']}"
+    subtitle = pretty_date(datetime.strptime(puzzle["date"], "%Y-%m-%d").date())
     guesses = choose_guesses(answer, words)
     rng = random.Random(answer)
-    voice = [rng.choice(VOICE_OPENERS)]
+    voice = [f"{rng.choice(VOICE_OPENERS)} Wordle number {puzzle['id']}."]
     for i, guess in enumerate(guesses, 1):
         voice.append(voice_for_guess(guess, answer, i, rng))
 
@@ -303,28 +327,39 @@ def main():
 
         for row, _guess in enumerate(guesses):
             for hold in range(18):
-                img = draw_frame(guesses, answer, row, 0, "THE WORD STUFF", "5-letter word of the day")
+                img = draw_frame(guesses, answer, row, 0, title, subtitle)
                 img.save(frames_dir / f"frame_{frame_no:05d}.png")
                 frame_no += 1
             for letters in range(1, 6):
                 for _ in range(9):
-                    img = draw_frame(guesses, answer, row, letters, "THE WORD STUFF", "5-letter word of the day")
+                    img = draw_frame(guesses, answer, row, letters, title, subtitle)
                     img.save(frames_dir / f"frame_{frame_no:05d}.png")
                     frame_no += 1
             while frame_no < (row + 1) * frames_per_guess:
-                img = draw_frame(guesses, answer, row + 1, 0, "THE WORD STUFF", "5-letter word of the day")
+                img = draw_frame(guesses, answer, row + 1, 0, title, subtitle)
                 img.save(frames_dir / f"frame_{frame_no:05d}.png")
                 frame_no += 1
 
         while frame_no < total_frames:
-            img = draw_frame(guesses, answer, len(guesses), 0, "THE WORD STUFF", "Did you get it before the reveal?")
+            img = draw_frame(guesses, answer, len(guesses), 0, title, "Did you get it before the reveal?")
             img.save(frames_dir / f"frame_{frame_no:05d}.png")
             frame_no += 1
 
         render_video(frames_dir, audio, frame_no)
 
     STORY_OUT.write_text(
-        json.dumps({"answer": answer, "guesses": guesses, "voice": voice, "output": str(VIDEO_OUT)}, indent=2) + "\n",
+        json.dumps(
+            {
+                "wordle_id": puzzle["id"],
+                "date": puzzle["date"],
+                "answer": answer,
+                "guesses": guesses,
+                "voice": voice,
+                "output": str(VIDEO_OUT),
+            },
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     print(VIDEO_OUT)

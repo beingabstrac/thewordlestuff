@@ -1,8 +1,8 @@
-# thewordstuff
+# thewordlestuff
 
-Free MVP renderer for 5-letter word guessing reels.
+Free MVP renderer for 5-letter Wordle-style guessing reels.
 
-It does not use the Wordle name, logo, or exact brand UI.
+Default puzzle starts at June 19, 2021.
 
 Run:
 
@@ -13,5 +13,11 @@ Run:
 Output:
 
 ```text
-outputs/thewordstuff_mvp.mp4
+outputs/thewordlestuff_mvp.mp4
+```
+
+Render a specific date:
+
+```bash
+WORDLE_DATE=2021-06-19 ./scripts/render.sh
 ```
