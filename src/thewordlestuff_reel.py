@@ -212,7 +212,7 @@ def text_center(draw, xy, text, font_obj, fill):
     )
 
 
-def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title, subtitle):
+def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title, subtitle, pressed_key=None):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
@@ -270,6 +270,8 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
             y = key_y + row_i * (key_h + 18)
             state = key_states.get(ch)
             fill = tile_color(state) if state else KEY_BG
+            if pressed_key == ch:
+                fill = "#b8bec4" if not state else fill
             draw.rectangle((x, y, x + key_w, y + key_h), fill=fill)
             text_center(draw, (x, y, key_w, key_h), ch, F_KEY, "#ffffff" if state else TEXT)
 
@@ -407,11 +409,20 @@ def main():
         frame_no = 0
         audio_events = []
 
-        def add_frames(seconds, active_row, typed_letters, reveal_letters, card_subtitle=None):
+        def add_frames(seconds, active_row, typed_letters, reveal_letters, card_subtitle=None, pressed_key=None):
             nonlocal frame_no
             count = max(1, int(round(seconds * FPS)))
             for _ in range(count):
-                img = draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title, card_subtitle or subtitle)
+                img = draw_frame(
+                    guesses,
+                    answer,
+                    active_row,
+                    typed_letters,
+                    reveal_letters,
+                    title,
+                    card_subtitle or subtitle,
+                    pressed_key,
+                )
                 img.save(frames_dir / f"frame_{frame_no:05d}.png")
                 frame_no += 1
 
@@ -421,7 +432,8 @@ def main():
             audio_events.append((frame_no / FPS + 0.05, clips[row + 1]))
             add_frames(0.25 + rng.random() * 0.16, row, 0, 0)
             for letters in range(1, 6):
-                add_frames(0.13 + rng.random() * 0.07, row, letters, 0)
+                add_frames(0.08, row, letters, 0, pressed_key=_guess[letters - 1])
+                add_frames(0.08 + rng.random() * 0.05, row, letters, 0)
             add_frames(0.38 + rng.random() * 0.15, row, 5, 0)
             for letters in range(1, 6):
                 add_frames(0.24 + rng.random() * 0.08, row, 5, letters)
