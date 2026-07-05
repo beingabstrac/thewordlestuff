@@ -216,7 +216,7 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    draw.text((W / 2, 178), f"{title} • {subtitle}", font=F_TITLE, fill=MUTED, anchor="mm")
+    draw.text((W / 2, 178), f"{title}   •   {subtitle}", font=F_TITLE, fill=MUTED, anchor="mm")
 
     tile = 118
     gap = 10
