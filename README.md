@@ -21,3 +21,10 @@ Render a specific date:
 ```bash
 WORDLE_DATE=2021-06-19 ./scripts/render.sh
 ```
+
+Render old-to-new:
+
+```bash
+./scripts/render.sh
+python3 scripts/advance_progress.py
+```

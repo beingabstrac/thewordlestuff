@@ -19,13 +19,14 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs"
 WORDS_FILE = ROOT / "data" / "words.json"
+PROGRESS_FILE = ROOT / "data" / "progress.json"
 VIDEO_OUT = OUT / "thewordlestuff_mvp.mp4"
 STORY_OUT = OUT / "thewordlestuff_storyboard.json"
 START_DATE = date(2021, 6, 19)
 
 W, H = 1080, 1920
 FPS = 30
-BG = "#ffffff"
+BG = "#fbfaf7"
 TEXT = "#1f2328"
 MUTED = "#878a8c"
 GRID_BORDER = "#d3d6da"
@@ -65,10 +66,10 @@ def font(size, bold=False):
     return ImageFont.load_default()
 
 
-F_TITLE = font(76, True)
-F_SUB = font(34, False)
-F_TILE = font(74, True)
-F_KEY = font(30, True)
+F_TITLE = font(78, True)
+F_SUB = font(36, False)
+F_TILE = font(78, True)
+F_KEY = font(32, True)
 F_HANDLE = font(42, True)
 
 
@@ -76,8 +77,16 @@ def puzzle_date():
     raw = os.getenv("WORDLE_DATE")
     if raw:
         return datetime.strptime(raw, "%Y-%m-%d").date()
-    offset = int(os.getenv("WORDLE_OFFSET", "0"))
+    offset = int(os.getenv("WORDLE_OFFSET", str(load_progress_offset())))
     return START_DATE + timedelta(days=offset)
+
+
+def load_progress_offset():
+    try:
+        data = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return 0
+    return int(data.get("next_offset", 0))
 
 
 def pretty_date(value):
@@ -189,15 +198,15 @@ def draw_frame(guesses, answer, reveal_row, reveal_letters, title, subtitle):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    draw.text((W / 2, 78), title, font=F_TITLE, fill=TEXT, anchor="mm")
-    draw.line((92, 135, W - 92, 135), fill="#e1e4e8", width=2)
-    draw.text((W / 2, 178), subtitle, font=F_SUB, fill=MUTED, anchor="mm")
+    draw.text((W / 2, 82), title, font=F_TITLE, fill=TEXT, anchor="mm")
+    draw.line((92, 144, W - 92, 144), fill="#e1e4e8", width=2)
+    draw.text((W / 2, 188), subtitle, font=F_SUB, fill=MUTED, anchor="mm")
 
-    tile = 112
-    gap = 12
+    tile = 118
+    gap = 10
     grid_w = 5 * tile + 4 * gap
     start_x = (W - grid_w) // 2
-    start_y = 245
+    start_y = 255
 
     visible_guesses = guesses[: reveal_row + 1]
     scores = [score_guess(g, answer) for g in visible_guesses]
@@ -228,10 +237,10 @@ def draw_frame(guesses, answer, reveal_row, reveal_letters, title, subtitle):
             if letter:
                 text_center(draw, (x, y, tile, tile), letter, F_TILE, "#ffffff" if fill != BG else TEXT)
 
-    key_w = 86
-    key_h = 86
+    key_w = 90
+    key_h = 88
     key_gap = 10
-    key_y = 1168
+    key_y = 1128
     for row_i, row in enumerate(KEY_ROWS):
         row_w = len(row) * key_w + (len(row) - 1) * key_gap
         x0 = (W - row_w) // 2
@@ -247,7 +256,7 @@ def draw_frame(guesses, answer, reveal_row, reveal_letters, title, subtitle):
             draw.rounded_rectangle((x, y, x + key_w, y + key_h), radius=8, fill=fill)
             text_center(draw, (x, y, key_w, key_h), ch, F_KEY, "#ffffff" if state else TEXT)
 
-    draw.text((W / 2, 1638), "@thewordlestuff", font=F_HANDLE, fill="#111111", anchor="mm")
+    draw.text((W / 2, 1598), "@thewordlestuff", font=F_HANDLE, fill="#111111", anchor="mm")
     return img
 
 
@@ -304,6 +313,7 @@ def main():
     OUT.mkdir(exist_ok=True)
     words = load_words()
     requested_date = puzzle_date()
+    offset = (requested_date - START_DATE).days
     puzzle = fetch_wordle_puzzle(requested_date)
     answer = puzzle["answer"]
     title = f"WORDLE #{puzzle['id']}"
@@ -352,6 +362,7 @@ def main():
             {
                 "wordle_id": puzzle["id"],
                 "date": puzzle["date"],
+                "offset": offset,
                 "answer": answer,
                 "guesses": guesses,
                 "voice": voice,
