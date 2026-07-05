@@ -78,8 +78,8 @@ def font(size, bold=False):
     return ImageFont.load_default()
 
 
-F_TITLE = font(78, True)
-F_SUB = font(36, False)
+F_TITLE = font(38, True)
+F_SUB = font(38, False)
 F_TILE = font(78, True)
 F_KEY = font(32, True)
 F_HANDLE = font(42, True)
@@ -203,22 +203,28 @@ def keyboard_colors(guesses, scores):
 def text_center(draw, xy, text, font_obj, fill):
     box = draw.textbbox((0, 0), text, font=font_obj)
     x, y, w, h = xy
-    draw.text((x + (w - box[2]) / 2, y + (h - box[3]) / 2 - 6), text, font=font_obj, fill=fill)
+    text_w = box[2] - box[0]
+    text_h = box[3] - box[1]
+    draw.text(
+        (x + (w - text_w) / 2 - box[0], y + (h - text_h) / 2 - box[1]),
+        text,
+        font=font_obj,
+        fill=fill,
+    )
 
 
 def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title, subtitle):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    draw.text((W / 2, 82), title, font=F_TITLE, fill=TEXT, anchor="mm")
-    draw.line((92, 144, W - 92, 144), fill="#e1e4e8", width=2)
-    draw.text((W / 2, 188), subtitle, font=F_SUB, fill=MUTED, anchor="mm")
+    draw.text((W / 2, 160), title, font=F_TITLE, fill=MUTED, anchor="mm")
+    draw.text((W / 2, 212), subtitle, font=F_SUB, fill=MUTED, anchor="mm")
 
     tile = 118
     gap = 10
     grid_w = 5 * tile + 4 * gap
     start_x = (W - grid_w) // 2
-    start_y = 255
+    start_y = 300
 
     visible_guesses = guesses[: active_row + 1]
     scores = [score_guess(g, answer) for g in visible_guesses]
@@ -253,7 +259,7 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
     key_w = 90
     key_h = 88
     key_gap = 10
-    key_y = 1128
+    key_y = 1160
     for row_i, row in enumerate(KEY_ROWS):
         row_w = len(row) * key_w + (len(row) - 1) * key_gap
         x0 = (W - row_w) // 2
@@ -266,10 +272,10 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
             y = key_y + row_i * (key_h + 18)
             state = key_states.get(ch)
             fill = tile_color(state) if state else KEY_BG
-            draw.rounded_rectangle((x, y, x + key_w, y + key_h), radius=8, fill=fill)
+            draw.rectangle((x, y, x + key_w, y + key_h), fill=fill)
             text_center(draw, (x, y, key_w, key_h), ch, F_KEY, "#ffffff" if state else TEXT)
 
-    draw.text((W / 2, 1598), "@thewordlestuff", font=F_HANDLE, fill="#111111", anchor="mm")
+    draw.text((W / 2, 1625), "@thewordlestuff", font=F_HANDLE, fill="#111111", anchor="mm")
     return img
 
 
