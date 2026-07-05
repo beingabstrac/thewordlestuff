@@ -290,7 +290,7 @@ async def edge_voice(text, out_path, voice_index):
     communicate = edge_tts.Communicate(text, voice=voice, rate="+8%", pitch="+0Hz")
     await communicate.save(str(mp3))
     subprocess.run(
-        ["ffmpeg", "-y", "-i", str(mp3), "-ar", "44100", str(out_path)],
+        ["ffmpeg", "-y", "-i", str(mp3), "-ar", "44100", "-ac", "1", "-acodec", "pcm_s16le", str(out_path)],
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -298,8 +298,7 @@ async def edge_voice(text, out_path, voice_index):
     mp3.unlink(missing_ok=True)
 
 
-def make_voice(lines, out_path, voice_index):
-    text = " ".join(lines)
+def make_voice_clip(text, out_path, voice_index):
     try:
         asyncio.run(edge_voice(text, out_path, voice_index))
         return
@@ -309,7 +308,12 @@ def make_voice(lines, out_path, voice_index):
         aiff = out_path.with_suffix(".aiff")
         mac_voices = ["Samantha", "Alex", "Ava", "Tom"]
         subprocess.run(["say", "-v", mac_voices[voice_index % len(mac_voices)], "-r", "178", "-o", str(aiff), text], check=True)
-        subprocess.run(["ffmpeg", "-y", "-i", str(aiff), "-ar", "44100", str(out_path)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(aiff), "-ar", "44100", "-ac", "1", "-acodec", "pcm_s16le", str(out_path)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         aiff.unlink(missing_ok=True)
         return
     if shutil.which("espeak-ng"):
@@ -325,6 +329,29 @@ def make_voice(lines, out_path, voice_index):
 def wav_duration(path):
     with wave.open(str(path), "rb") as wf:
         return wf.getnframes() / wf.getframerate()
+
+
+def write_audio_timeline(events, out_path, total_seconds):
+    framerate = 44100
+    sampwidth = 2
+    cursor = 0.0
+
+    def silence(seconds):
+        return b"\x00" * max(0, int(round(seconds * framerate)) * sampwidth)
+
+    with wave.open(str(out_path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(sampwidth)
+        out.setframerate(framerate)
+        for start, clip_path in events:
+            if start > cursor:
+                out.writeframes(silence(start - cursor))
+                cursor = start
+            with wave.open(str(clip_path), "rb") as clip:
+                out.writeframes(clip.readframes(clip.getnframes()))
+                cursor += clip.getnframes() / clip.getframerate()
+        if total_seconds > cursor:
+            out.writeframes(silence(total_seconds - cursor))
 
 
 def render_video(frames_dir, audio_path, total_frames):
@@ -370,11 +397,17 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         frames_dir = tmp / "frames"
+        clips_dir = tmp / "clips"
         frames_dir.mkdir()
+        clips_dir.mkdir()
         audio = tmp / "voice.wav"
-        make_voice(voice, audio, puzzle["id"])
-        audio_seconds = wav_duration(audio)
+        clips = []
+        for i, line in enumerate(voice):
+            clip = clips_dir / f"voice_{i:02d}.wav"
+            make_voice_clip(line, clip, puzzle["id"])
+            clips.append(clip)
         frame_no = 0
+        audio_events = []
 
         def add_frames(seconds, active_row, typed_letters, reveal_letters, card_subtitle=None):
             nonlocal frame_no
@@ -384,8 +417,11 @@ def main():
                 img.save(frames_dir / f"frame_{frame_no:05d}.png")
                 frame_no += 1
 
+        audio_events.append((0.12, clips[0]))
+        add_frames(1.05, 0, 0, 0)
         for row, _guess in enumerate(guesses):
-            add_frames(0.55 + rng.random() * 0.35, row, 0, 0)
+            audio_events.append((frame_no / FPS + 0.05, clips[row + 1]))
+            add_frames(0.25 + rng.random() * 0.16, row, 0, 0)
             for letters in range(1, 6):
                 add_frames(0.13 + rng.random() * 0.07, row, letters, 0)
             add_frames(0.38 + rng.random() * 0.15, row, 5, 0)
@@ -394,7 +430,9 @@ def main():
             add_frames((1.65 if _guess == answer else 0.9) + rng.random() * 0.35, row + 1, 0, 0)
 
         add_frames(1.4, len(guesses), 0, 0, "Did you get it before the reveal?")
-        while frame_no / FPS < audio_seconds + 0.5:
+        write_audio_timeline(audio_events, audio, frame_no / FPS)
+        audio_seconds = wav_duration(audio)
+        while frame_no / FPS < audio_seconds + 0.2:
             add_frames(0.25, len(guesses), 0, 0, "Did you get it before the reveal?")
 
         render_video(frames_dir, audio, frame_no)
@@ -408,6 +446,7 @@ def main():
                 "answer": answer,
                 "guesses": guesses,
                 "voice": voice,
+                "voice_timing": [{"at": round(start, 2), "line": voice[i]} for i, (start, _clip) in enumerate(audio_events)],
                 "output": str(VIDEO_OUT),
             },
             indent=2,
