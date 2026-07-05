@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
+import asyncio
 import hashlib
 import json
-import math
 import os
 import random
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -37,14 +38,25 @@ KEY_BG = "#d3d6da"
 
 KEY_ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"]
 
-VOICE_OPENERS = ["Let's solve this one.", "Okay, new puzzle.", "Let's see if we can get it."]
+EDGE_VOICES = [
+    "en-US-AndrewMultilingualNeural",
+    "en-US-AvaMultilingualNeural",
+    "en-US-BrianMultilingualNeural",
+    "en-US-EmmaMultilingualNeural",
+]
+
+VOICE_OPENERS = [
+    "Okay, let's play this one out.",
+    "Alright, let's see where this goes.",
+    "Okay, new one. Let's work through it.",
+]
 
 VOICE_REACTIONS = {
-    "miss": ["That did not help much.", "Rough start, but we learned what is not in it.", "Okay, mostly clearing letters."],
-    "some": ["Okay, that gives us something.", "Not bad, we have a clue.", "That helped a little."],
-    "good": ["Wait, that is actually useful.", "Now we are getting close.", "That narrowed it down a lot."],
-    "close": ["That is really close.", "I think I see it now.", "One letter away kind of feeling."],
-    "final": ["I think this is it.", "This has to be it.", "Final answer."],
+    "miss": ["Hmm, not much there.", "Okay, mostly a cleanup guess.", "That clears a few letters at least."],
+    "some": ["Okay, we got something.", "That gives us a little direction.", "Not amazing, but it helps."],
+    "good": ["Wait, that's actually useful.", "Now we're getting somewhere.", "That narrows it down a lot."],
+    "close": ["Oh, that's close.", "I think I can see it now.", "That feels one move away."],
+    "final": ["Yeah, this should be it.", "I think this is the one.", "This has to be it."],
 }
 
 
@@ -159,19 +171,19 @@ def choose_guesses(answer, words):
 
 def voice_for_guess(guess, answer, turn, rng):
     if guess == answer:
-        return f"{rng.choice(VOICE_REACTIONS['final'])} {answer}. That is the word."
+        return f"{rng.choice(VOICE_REACTIONS['final'])} {answer}. There it is."
     score = score_guess(guess, answer)
     greens = score.count("correct")
     yellows = score.count("present")
     if turn == 1:
-        return f"Starting with {guess}."
+        return f"I'll start with {guess}. {rng.choice(VOICE_REACTIONS['some'] if greens + yellows else VOICE_REACTIONS['miss'])}"
     if greens >= 3 or greens + yellows >= 4:
-        return rng.choice(VOICE_REACTIONS["close"])
+        return f"Let's try {guess}. {rng.choice(VOICE_REACTIONS['close'])}"
     if greens >= 2 or greens + yellows >= 3:
-        return rng.choice(VOICE_REACTIONS["good"])
+        return f"Maybe {guess}. {rng.choice(VOICE_REACTIONS['good'])}"
     if greens + yellows >= 1:
-        return rng.choice(VOICE_REACTIONS["some"])
-    return rng.choice(VOICE_REACTIONS["miss"])
+        return f"I'll test {guess}. {rng.choice(VOICE_REACTIONS['some'])}"
+    return f"Trying {guess}. {rng.choice(VOICE_REACTIONS['miss'])}"
 
 
 def tile_color(state):
@@ -194,7 +206,7 @@ def text_center(draw, xy, text, font_obj, fill):
     draw.text((x + (w - box[2]) / 2, y + (h - box[3]) / 2 - 6), text, font=font_obj, fill=fill)
 
 
-def draw_frame(guesses, answer, reveal_row, reveal_letters, title, subtitle):
+def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title, subtitle):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
@@ -208,9 +220,9 @@ def draw_frame(guesses, answer, reveal_row, reveal_letters, title, subtitle):
     start_x = (W - grid_w) // 2
     start_y = 255
 
-    visible_guesses = guesses[: reveal_row + 1]
+    visible_guesses = guesses[: active_row + 1]
     scores = [score_guess(g, answer) for g in visible_guesses]
-    key_states = keyboard_colors(visible_guesses[:reveal_row], scores[:reveal_row])
+    key_states = keyboard_colors(visible_guesses[:active_row], scores[:active_row])
 
     for r in range(6):
         for c in range(5):
@@ -219,20 +231,21 @@ def draw_frame(guesses, answer, reveal_row, reveal_letters, title, subtitle):
             fill = BG
             border = GRID_BORDER
             letter = ""
-            if r < reveal_row:
+            if r < active_row:
                 state = score_guess(guesses[r], answer)[c]
                 fill = tile_color(state)
                 border = fill
                 letter = guesses[r][c]
-            elif r == reveal_row and reveal_row < len(guesses) and c < reveal_letters:
-                state = score_guess(guesses[r], answer)[c]
-                fill = tile_color(state)
-                border = fill
-                letter = guesses[r][c]
-                key_states[letter] = state
-            elif r == reveal_row and reveal_row < len(guesses):
-                letter = guesses[r][c]
-                border = "#878a8c"
+            elif r == active_row and active_row < len(guesses):
+                if c < reveal_letters:
+                    state = score_guess(guesses[r], answer)[c]
+                    fill = tile_color(state)
+                    border = fill
+                    letter = guesses[r][c]
+                    key_states[letter] = state
+                elif c < typed_letters:
+                    letter = guesses[r][c]
+                    border = "#878a8c"
             draw.rectangle((x, y, x + tile, y + tile), fill=fill, outline=border, width=4)
             if letter:
                 text_center(draw, (x, y, tile, tile), letter, F_TILE, "#ffffff" if fill != BG else TEXT)
@@ -260,11 +273,36 @@ def draw_frame(guesses, answer, reveal_row, reveal_letters, title, subtitle):
     return img
 
 
-def make_voice(lines, out_path):
+async def edge_voice(text, out_path, voice_index):
+    deps = ROOT / ".deps"
+    if deps.exists():
+        sys.path.insert(0, str(deps))
+    import edge_tts
+
+    voice = EDGE_VOICES[voice_index % len(EDGE_VOICES)]
+    mp3 = out_path.with_suffix(".mp3")
+    communicate = edge_tts.Communicate(text, voice=voice, rate="+8%", pitch="+0Hz")
+    await communicate.save(str(mp3))
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(mp3), "-ar", "44100", str(out_path)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    mp3.unlink(missing_ok=True)
+
+
+def make_voice(lines, out_path, voice_index):
     text = " ".join(lines)
+    try:
+        asyncio.run(edge_voice(text, out_path, voice_index))
+        return
+    except Exception as exc:
+        print(f"edge-tts unavailable, falling back to system voice: {exc}")
     if shutil.which("say"):
         aiff = out_path.with_suffix(".aiff")
-        subprocess.run(["say", "-v", "Samantha", "-r", "185", "-o", str(aiff), text], check=True)
+        mac_voices = ["Samantha", "Alex", "Ava", "Tom"]
+        subprocess.run(["say", "-v", mac_voices[voice_index % len(mac_voices)], "-r", "178", "-o", str(aiff), text], check=True)
         subprocess.run(["ffmpeg", "-y", "-i", str(aiff), "-ar", "44100", str(out_path)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         aiff.unlink(missing_ok=True)
         return
@@ -300,7 +338,6 @@ def render_video(frames_dir, audio_path, total_frames):
             "yuv420p",
             "-c:a",
             "aac",
-            "-shortest",
             str(VIDEO_OUT),
         ],
         check=True,
@@ -329,31 +366,30 @@ def main():
         frames_dir = tmp / "frames"
         frames_dir.mkdir()
         audio = tmp / "voice.wav"
-        make_voice(voice, audio)
-        audio_seconds = max(wav_duration(audio), len(guesses) * 2.4 + 2.0)
-        total_frames = int(math.ceil(audio_seconds * FPS))
-        frames_per_guess = max(42, total_frames // (len(guesses) + 1))
+        make_voice(voice, audio, puzzle["id"])
+        audio_seconds = wav_duration(audio)
         frame_no = 0
 
-        for row, _guess in enumerate(guesses):
-            for hold in range(18):
-                img = draw_frame(guesses, answer, row, 0, title, subtitle)
-                img.save(frames_dir / f"frame_{frame_no:05d}.png")
-                frame_no += 1
-            for letters in range(1, 6):
-                for _ in range(9):
-                    img = draw_frame(guesses, answer, row, letters, title, subtitle)
-                    img.save(frames_dir / f"frame_{frame_no:05d}.png")
-                    frame_no += 1
-            while frame_no < (row + 1) * frames_per_guess:
-                img = draw_frame(guesses, answer, row + 1, 0, title, subtitle)
+        def add_frames(seconds, active_row, typed_letters, reveal_letters, card_subtitle=None):
+            nonlocal frame_no
+            count = max(1, int(round(seconds * FPS)))
+            for _ in range(count):
+                img = draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title, card_subtitle or subtitle)
                 img.save(frames_dir / f"frame_{frame_no:05d}.png")
                 frame_no += 1
 
-        while frame_no < total_frames:
-            img = draw_frame(guesses, answer, len(guesses), 0, title, "Did you get it before the reveal?")
-            img.save(frames_dir / f"frame_{frame_no:05d}.png")
-            frame_no += 1
+        for row, _guess in enumerate(guesses):
+            add_frames(0.55 + rng.random() * 0.35, row, 0, 0)
+            for letters in range(1, 6):
+                add_frames(0.13 + rng.random() * 0.07, row, letters, 0)
+            add_frames(0.38 + rng.random() * 0.15, row, 5, 0)
+            for letters in range(1, 6):
+                add_frames(0.24 + rng.random() * 0.08, row, 5, letters)
+            add_frames((1.65 if _guess == answer else 0.9) + rng.random() * 0.35, row + 1, 0, 0)
+
+        add_frames(1.4, len(guesses), 0, 0, "Did you get it before the reveal?")
+        while frame_no / FPS < audio_seconds + 0.5:
+            add_frames(0.25, len(guesses), 0, 0, "Did you get it before the reveal?")
 
         render_video(frames_dir, audio, frame_no)
 

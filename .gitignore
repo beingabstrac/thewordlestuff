@@ -2,8 +2,10 @@
 __pycache__/
 *.pyc
 .env
+.deps/
 
 outputs/
 tmp/
 *.wav
 *.aiff
+*.mp3

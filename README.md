@@ -7,6 +7,7 @@ Default puzzle starts at June 19, 2021.
 Run:
 
 ```bash
+python3 -m pip install -r requirements.txt
 ./scripts/render.sh
 ```
 
