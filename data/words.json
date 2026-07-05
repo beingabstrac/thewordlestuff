@@ -1,0 +1,31 @@
+{
+  "answers": [
+    "CRANE", "PLANT", "BRAVE", "STONE", "LIGHT", "TRACE", "SWEET", "GLASS",
+    "FRAME", "CLOUD", "SHARE", "POINT", "DRIVE", "HOUSE", "SMILE", "CHAIR",
+    "BREAD", "WATER", "MUSIC", "HEART", "DREAM", "GRASS", "TRAIN", "WORLD",
+    "PIANO", "RIVER", "MONEY", "LUCKY", "WATCH", "QUIET", "FRESH", "ROUND",
+    "CLEAN", "MATCH", "SOUND", "GREEN", "BLACK", "WHITE", "BROWN", "TIGER",
+    "LEMON", "MANGO", "HONEY", "CANDY", "MAGIC", "STORY", "PARTY", "HAPPY",
+    "ANGRY", "FUNNY", "WORRY", "EARLY", "LATER", "NIGHT", "TODAY", "PHONE",
+    "PHOTO", "VIDEO", "PAPER", "RADIO", "BRAIN", "VOICE", "TOUCH", "SLEEP",
+    "LAUGH", "TEARS", "SOLID", "EMPTY", "SUPER", "POWER", "LEVEL", "FINAL"
+  ],
+  "openers": [
+    "STARE", "CRANE", "SLATE", "ROAST", "AUDIO", "RAISE", "TRACE", "ADIEU"
+  ],
+  "valid": [
+    "STARE", "CRANE", "SLATE", "ROAST", "AUDIO", "RAISE", "TRACE", "ADIEU",
+    "PLANT", "BRAVE", "STONE", "LIGHT", "SWEET", "GLASS", "FRAME", "CLOUD",
+    "SHARE", "POINT", "DRIVE", "HOUSE", "SMILE", "CHAIR", "BREAD", "WATER",
+    "MUSIC", "HEART", "DREAM", "GRASS", "TRAIN", "WORLD", "PIANO", "RIVER",
+    "MONEY", "LUCKY", "WATCH", "QUIET", "FRESH", "ROUND", "CLEAN", "MATCH",
+    "SOUND", "GREEN", "BLACK", "WHITE", "BROWN", "TIGER", "LEMON", "MANGO",
+    "HONEY", "CANDY", "MAGIC", "STORY", "PARTY", "HAPPY", "ANGRY", "FUNNY",
+    "WORRY", "EARLY", "LATER", "NIGHT", "TODAY", "PHONE", "PHOTO", "VIDEO",
+    "PAPER", "RADIO", "BRAIN", "VOICE", "TOUCH", "SLEEP", "LAUGH", "TEARS",
+    "SOLID", "EMPTY", "SUPER", "POWER", "LEVEL", "FINAL", "BRICK", "PRIDE",
+    "SPARE", "SCARE", "SNARE", "SPINE", "SHINE", "CHIME", "GRIND", "BLEND",
+    "BLINK", "BRING", "CROWN", "CROWD", "CROSS", "COVER", "HOVER", "LOVER",
+    "LOWER", "OWNER", "OTHER", "OUTER", "OFFER", "ORDER", "OLDER", "UNDER"
+  ]
+}
