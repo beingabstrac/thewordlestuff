@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import random
 import sys
 import time
 import urllib.parse
@@ -13,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 VIDEO_PATH = ROOT / "outputs" / "thewordlestuff_mvp.mp4"
 STORY_PATH = ROOT / "outputs" / "thewordlestuff_storyboard.json"
 QUEUE_FULL_MARKER = ROOT / "outputs" / "queue_full"
+VIDEO_W = 1080
+VIDEO_H = 1920
 
 
 def require_env(name):
@@ -108,20 +111,35 @@ def cloudinary_destroy(public_id):
         response.read()
 
 
-def public_video_asset():
+def cloudinary_thumbnail_url(public_id, story):
+    cloud_name, _, _ = cloudinary_config()
+    if not cloud_name or not public_id:
+        return None
+    seed = f"{story.get('wordle_id', '')}:{story.get('answer', '')}:{story.get('date', '')}"
+    rng = random.Random(seed)
+    second = round(rng.uniform(3.2, 9.5), 1)
+    transform = f"so_{second},w_{VIDEO_W},h_{VIDEO_H},c_fill,f_jpg"
+    return f"https://res.cloudinary.com/{cloud_name}/video/upload/{transform}/{public_id}.jpg"
+
+
+def public_video_asset(story):
     public_url = os.getenv("PUBLIC_VIDEO_URL")
     if public_url:
-        return public_url, None
-    return cloudinary_upload(VIDEO_PATH)
+        return public_url, None, None
+    video_url, public_id = cloudinary_upload(VIDEO_PATH)
+    return video_url, public_id, cloudinary_thumbnail_url(public_id, story)
 
 
 def gql_string(value):
     return json.dumps(value)
 
 
-def create_buffer_post(caption, video_url):
+def create_buffer_post(caption, video_url, thumbnail_url=None):
     api_key = require_env("BUFFER_API_KEY")
     channel_id = require_env("BUFFER_INSTAGRAM_CHANNEL_ID")
+    thumbnail_field = ""
+    if thumbnail_url:
+        thumbnail_field = f"\n              thumbnailUrl: {gql_string(thumbnail_url)}"
     mutation = f"""
     mutation {{
       createPost(input: {{
@@ -140,6 +158,7 @@ def create_buffer_post(caption, video_url):
           {{
             video: {{
               url: {gql_string(video_url)}
+              {thumbnail_field}
             }}
           }}
         ]
@@ -165,6 +184,9 @@ def create_buffer_post(caption, video_url):
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Buffer HTTP {exc.code}: {body}") from exc
     if data.get("errors"):
+        if thumbnail_url and is_thumbnail_schema_error(data["errors"]):
+            print(json.dumps({"thumbnail": "unsupported_by_buffer", "retrying": "without_thumbnail"}, indent=2))
+            return create_buffer_post(caption, video_url, None)
         raise RuntimeError(json.dumps(data["errors"], indent=2))
     result = data.get("data", {}).get("createPost", {})
     if result.get("message"):
@@ -182,6 +204,12 @@ def is_queue_full_error(message):
     return any(marker in text for marker in markers)
 
 
+def is_thumbnail_schema_error(errors):
+    text = json.dumps(errors).lower()
+    markers = ["thumbnailurl", "thumbnail", "unknown field", "is not defined", "cannot query field"]
+    return any(marker in text for marker in markers)
+
+
 def main():
     QUEUE_FULL_MARKER.unlink(missing_ok=True)
     if not VIDEO_PATH.exists():
@@ -191,14 +219,14 @@ def main():
     if os.getenv("DRY_RUN") == "1":
         print(json.dumps({"caption": caption}, indent=2))
         return
-    video_url, cloudinary_public_id = public_video_asset()
-    buffer_post = create_buffer_post(caption, video_url)
+    video_url, cloudinary_public_id, thumbnail_url = public_video_asset(story)
+    buffer_post = create_buffer_post(caption, video_url, thumbnail_url)
     if not buffer_post:
         cloudinary_destroy(cloudinary_public_id)
         QUEUE_FULL_MARKER.parent.mkdir(parents=True, exist_ok=True)
         QUEUE_FULL_MARKER.write_text("1\n", encoding="utf-8")
         return
-    print(json.dumps({"buffer_post": buffer_post, "video_url": video_url}, indent=2))
+    print(json.dumps({"buffer_post": buffer_post, "video_url": video_url, "thumbnail_url": thumbnail_url}, indent=2))
 
 
 if __name__ == "__main__":

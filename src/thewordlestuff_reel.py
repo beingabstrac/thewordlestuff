@@ -480,6 +480,12 @@ def main():
                 img.save(frames_dir / f"frame_{frame_no:05d}.png")
                 frame_no += 1
 
+        if os.getenv("DISABLE_FIRST_FRAME_COVER") != "1":
+            cover_row = min(max(2, len(guesses) // 2), max(1, len(guesses) - 1))
+            cover = draw_frame(guesses, answer, cover_row, 0, 0, title, subtitle)
+            cover.save(frames_dir / f"frame_{frame_no:05d}.png")
+            frame_no += 1
+
         voice_index = 0
         audio_events.append((0.12, clips[voice_index]))
         voice_index += 1
