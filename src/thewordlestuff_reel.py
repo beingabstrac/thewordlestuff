@@ -59,22 +59,22 @@ KOKORO_VOICES = [
 KOKORO_PIPELINE = None
 
 VOICE_OPENERS = [
-    "Okay, let's see.",
-    "Alright, let's try this.",
-    "Okay, new one.",
-    "Let's work through it.",
+    "Okay.",
+    "Alright.",
+    "Let's see.",
+    "New one.",
 ]
 
 VOICE_REACTIONS = {
-    "miss": ["not much there.", "mostly a cleanup guess.", "that clears a few letters at least."],
-    "some": ["that's something.", "that gives us a little direction.", "not amazing, but it helps.", "at least that helps a bit."],
-    "good": ["that's actually useful.", "now we're getting somewhere.", "that narrows it down a lot."],
-    "close": ["that's close.", "I think I can see it now.", "that feels one move away."],
-    "final": ["Yeah, this should be it.", "I think this is the one.", "This has to be it."],
+    "miss": ["nothing.", "not much.", "okay, that mostly clears letters."],
+    "some": ["hmm, one clue.", "okay, that helps a little.", "not great, but useful."],
+    "good": ["that's useful.", "okay, now we're close.", "that helps a lot."],
+    "close": ["oh, that's close.", "I think I see it.", "wait, that's almost it."],
+    "final": ["yeah, this should be it.", "I think that's it.", "this has to be it."],
 }
 
-VOICE_FILLERS = ["Hmm", "Okay", "Right", "Ah okay"]
-VOICE_HESITATIONS = ["Wait no", "Actually", "Hold on", "I might be wrong, but", "Let me try"]
+VOICE_FILLERS = ["Hmm", "Okay", "Right", "Oh"]
+VOICE_HESITATIONS = ["Wait", "Actually", "Hold on", "Maybe"]
 MOODS = ["calm", "rushed", "uncertain", "locked_in"]
 
 CHOREO_PROFILES = [
@@ -243,20 +243,20 @@ def strategy_line(guess, answer, previous_guesses, rng, used_letters=None):
     for old_guess, score in zip(previous_guesses, scores):
         for i, state in enumerate(score):
             if state == "correct":
-                locked.append(old_guess[i])
+                locked.append((old_guess[i], i))
             elif state == "present":
                 misplaced.append(old_guess[i])
     used_letters = used_letters if used_letters is not None else set()
-    fresh_locked = [letter for letter in locked if letter not in used_letters]
-    fresh_misplaced = [letter for letter in misplaced if letter not in used_letters]
+    fresh_locked = [(letter, i) for letter, i in locked if letter not in used_letters and guess[i] == letter]
+    fresh_misplaced = [letter for letter in misplaced if letter not in used_letters and letter in guess]
     if fresh_locked and rng.random() < 0.28:
-        letter = rng.choice(fresh_locked)
+        letter, _i = rng.choice(fresh_locked)
         used_letters.add(letter)
-        return f"We've got the {letter.upper()} in place, so {spoken_word(guess)} makes sense."
+        return f"{letter.upper()} is fixed. {spoken_word(guess).capitalize()} makes sense."
     if fresh_misplaced and rng.random() < 0.28:
         letter = rng.choice(fresh_misplaced)
         used_letters.add(letter)
-        return f"We need to move the {letter.upper()}. Maybe {spoken_word(guess)}."
+        return f"Need to move the {letter.upper()}. Maybe {spoken_word(guess)}."
     return None
 
 
@@ -270,35 +270,37 @@ def voice_text(text):
         .replace("Okay,", "Okay...")
         .replace("Hmm,", "Hmm...")
         .replace("Right,", "Right...")
-        .replace("Ah okay,", "Ah, okay...")
+        .replace("Oh,", "Oh...")
+        .replace("Wait,", "Wait...")
     )
 
 
 def voice_before_guess(guess, answer, turn, total_turns, rng, has_mistype=False, previous_guesses=None, mood="calm", used_strategy_letters=None):
     if guess == answer:
         if turn == 1:
-            return f"This is a wild first guess, but I'm trying {spoken_word(answer)}."
+            return f"{spoken_word(answer)} first. Why not."
         if turn == 2:
-            return f"I think we can jump straight to {spoken_word(answer)}."
+            return f"Could just be {spoken_word(answer)}."
         if turn == total_turns and turn >= 5:
-            return f"I don't want to overthink it now. {spoken_word(answer)}."
+            return f"No more overthinking. {spoken_word(answer)}."
         return f"I think it's {spoken_word(answer)}."
     if turn == 1:
-        return f"I'll start with {spoken_word(guess)}."
+        word = spoken_word(guess)
+        return rng.choice([f"{word.capitalize()} first.", f"Let's start {word}.", f"I'll open with {word}."])
     if total_turns >= 6 and turn >= 5:
-        return f"We're running out of room. Let's try {spoken_word(guess)}."
+        return f"Running out of room. {spoken_word(guess)}."
     if has_mistype:
-        return f"{rng.choice(['Wait no', 'Actually', 'Hold on'])}... let's do {spoken_word(guess)}."
+        return f"{rng.choice(['Wait', 'Actually', 'Hold on'])}... no. {spoken_word(guess)}."
     strategy = strategy_line(guess, answer, previous_guesses or [], rng, used_strategy_letters)
     if strategy:
         return strategy
     if mood == "rushed" and rng.random() < 0.45:
-        return f"Quick one, {spoken_word(guess)}."
+        return f"{spoken_word(guess)}."
     if mood == "uncertain" and rng.random() < 0.45:
-        return f"I'm not fully sure, but maybe {spoken_word(guess)}."
+        return f"Maybe {spoken_word(guess)}."
     if rng.random() < 0.28:
-        return f"{rng.choice(VOICE_HESITATIONS)} {spoken_word(guess)}."
-    openers = ["Let's try", "Maybe", "I'll test", "What about", "Let's check"]
+        return f"{rng.choice(VOICE_HESITATIONS)}... {spoken_word(guess)}."
+    openers = ["Try", "Maybe", "What about", "Let's check"]
     return f"{rng.choice(openers)} {spoken_word(guess)}."
 
 
@@ -310,18 +312,25 @@ def choose_reaction(category, rng, used_reactions):
     return choice
 
 
+def spoken_reaction(category, rng, used_reactions):
+    reaction = choose_reaction(category, rng, used_reactions)
+    if reaction.lower().startswith(("hmm", "okay", "oh", "wait", "yeah")):
+        return reaction[:1].upper() + reaction[1:]
+    return f"{rng.choice(VOICE_FILLERS)}, {reaction}"
+
+
 def voice_after_guess(guess, answer, turn, total_turns, rng, used_reactions=None):
     used_reactions = used_reactions if used_reactions is not None else set()
     if guess == answer:
         if turn == 1:
-            return f"No way. First try. It was {spoken_word(answer)}."
+            return f"No way. First try."
         if turn == 2:
-            return f"Okay, second try. I'll take that. {spoken_word(answer)}."
+            return f"Second try. I'll take that."
         if turn >= 6:
-            return f"Finally. Last try. It was {spoken_word(answer)}."
+            return f"Finally. Last try."
         if turn >= 5:
-            return f"That was close. {spoken_word(answer)}. Got it."
-        return f"{rng.choice(['Yep', 'There we go', 'Nice'])}, {spoken_word(answer)}. There it is."
+            return f"That was close. Got it."
+        return f"{rng.choice(['Yep', 'There we go', 'Nice'])}. Got it."
     score = score_guess(guess, answer)
     greens = score.count("correct")
     yellows = score.count("present")
@@ -329,12 +338,12 @@ def voice_after_guess(guess, answer, turn, total_turns, rng, used_reactions=None
     if total_turns >= 6 and turn >= 5 and greens + yellows < 3:
         return f"{filler}, that's not enough. This is getting tight."
     if greens >= 3 or greens + yellows >= 4:
-        return f"{filler}, {choose_reaction('close', rng, used_reactions)}"
+        return spoken_reaction("close", rng, used_reactions)
     if greens >= 2 or greens + yellows >= 3:
-        return f"{filler}, {choose_reaction('good', rng, used_reactions)}"
+        return spoken_reaction("good", rng, used_reactions)
     if greens + yellows >= 1:
-        return f"{filler}, {choose_reaction('some', rng, used_reactions)}"
-    return f"{filler}, {choose_reaction('miss', rng, used_reactions)}"
+        return spoken_reaction("some", rng, used_reactions)
+    return spoken_reaction("miss", rng, used_reactions)
 
 
 def tile_color(state):
@@ -683,13 +692,12 @@ def main():
         frame_no = 0
         audio_events = []
 
-        drift_seed = random.Random(f"{answer}:drift")
-        drift_phase_x = drift_seed.random() * math.tau
-        drift_phase_y = drift_seed.random() * math.tau
-
         def apply_drift(img, local_frame):
-            if os.getenv("DISABLE_CAMERA_DRIFT") == "1":
+            if os.getenv("ENABLE_CAMERA_DRIFT") != "1":
                 return img
+            drift_seed = random.Random(f"{answer}:drift")
+            drift_phase_x = drift_seed.random() * math.tau
+            drift_phase_y = drift_seed.random() * math.tau
             dx = int(round(1.6 * math.sin(local_frame / 53 + drift_phase_x)))
             dy = int(round(1.2 * math.sin(local_frame / 67 + drift_phase_y)))
             if dx == 0 and dy == 0:
