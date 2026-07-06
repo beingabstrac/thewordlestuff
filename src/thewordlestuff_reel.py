@@ -59,6 +59,41 @@ VOICE_REACTIONS = {
     "final": ["Yeah, this should be it.", "I think this is the one.", "This has to be it."],
 }
 
+VOICE_FILLERS = ["Hmm.", "Umm, okay.", "Right.", "Ah, okay.", "Okay."]
+
+CHOREO_PROFILES = [
+    {
+        "name": "thoughtful",
+        "pre": (0.35, 0.24),
+        "press": 0.09,
+        "between": (0.10, 0.08),
+        "submit": (0.55, 0.20),
+        "reveal": (0.29, 0.09),
+        "hold": (1.05, 0.45),
+        "final_hold": (1.95, 0.45),
+    },
+    {
+        "name": "steady",
+        "pre": (0.24, 0.16),
+        "press": 0.08,
+        "between": (0.08, 0.05),
+        "submit": (0.42, 0.14),
+        "reveal": (0.24, 0.08),
+        "hold": (0.85, 0.35),
+        "final_hold": (1.65, 0.35),
+    },
+    {
+        "name": "snappy",
+        "pre": (0.18, 0.14),
+        "press": 0.07,
+        "between": (0.06, 0.04),
+        "submit": (0.34, 0.12),
+        "reveal": (0.21, 0.07),
+        "hold": (0.72, 0.30),
+        "final_hold": (1.45, 0.30),
+    },
+]
+
 
 def load_words():
     return json.loads(WORDS_FILE.read_text(encoding="utf-8"))
@@ -168,21 +203,29 @@ def choose_guesses(answer, words):
     return guesses[:6]
 
 
-def voice_for_guess(guess, answer, turn, rng):
+def voice_before_guess(guess, answer, turn, rng):
     if guess == answer:
-        return f"{rng.choice(VOICE_REACTIONS['final'])} {answer}. There it is."
+        return f"I think it's {answer}."
+    if turn == 1:
+        return f"I'll start with {guess}."
+    openers = ["Let's try", "Maybe", "I'll test", "What about", "Let's check"]
+    return f"{rng.choice(openers)} {guess}."
+
+
+def voice_after_guess(guess, answer, turn, rng):
+    if guess == answer:
+        return f"{rng.choice(['Yep.', 'There we go.', 'Nice.'])} {answer}. There it is."
     score = score_guess(guess, answer)
     greens = score.count("correct")
     yellows = score.count("present")
-    if turn == 1:
-        return f"I'll start with {guess}. {rng.choice(VOICE_REACTIONS['some'] if greens + yellows else VOICE_REACTIONS['miss'])}"
+    filler = rng.choice(VOICE_FILLERS)
     if greens >= 3 or greens + yellows >= 4:
-        return f"Let's try {guess}. {rng.choice(VOICE_REACTIONS['close'])}"
+        return f"{filler} {rng.choice(VOICE_REACTIONS['close'])}"
     if greens >= 2 or greens + yellows >= 3:
-        return f"Maybe {guess}. {rng.choice(VOICE_REACTIONS['good'])}"
+        return f"{filler} {rng.choice(VOICE_REACTIONS['good'])}"
     if greens + yellows >= 1:
-        return f"I'll test {guess}. {rng.choice(VOICE_REACTIONS['some'])}"
-    return f"Trying {guess}. {rng.choice(VOICE_REACTIONS['miss'])}"
+        return f"{filler} {rng.choice(VOICE_REACTIONS['some'])}"
+    return f"{filler} {rng.choice(VOICE_REACTIONS['miss'])}"
 
 
 def tile_color(state):
@@ -391,9 +434,11 @@ def main():
     subtitle = pretty_date(datetime.strptime(puzzle["date"], "%Y-%m-%d").date())
     guesses = choose_guesses(answer, words)
     rng = random.Random(answer)
-    voice = [f"{rng.choice(VOICE_OPENERS)} Wordle number {puzzle['id']}."]
+    profile = rng.choice(CHOREO_PROFILES)
+    voice_lines = [f"{rng.choice(VOICE_OPENERS)} Wordle number {puzzle['id']}."]
     for i, guess in enumerate(guesses, 1):
-        voice.append(voice_for_guess(guess, answer, i, rng))
+        voice_lines.append(voice_before_guess(guess, answer, i, rng))
+        voice_lines.append(voice_after_guess(guess, answer, i, rng))
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -403,10 +448,12 @@ def main():
         clips_dir.mkdir()
         audio = tmp / "voice.wav"
         clips = []
-        for i, line in enumerate(voice):
+        clip_durations = []
+        for i, line in enumerate(voice_lines):
             clip = clips_dir / f"voice_{i:02d}.wav"
             make_voice_clip(line, clip, puzzle["id"])
             clips.append(clip)
+            clip_durations.append(wav_duration(clip))
         frame_no = 0
         audio_events = []
 
@@ -427,18 +474,26 @@ def main():
                 img.save(frames_dir / f"frame_{frame_no:05d}.png")
                 frame_no += 1
 
-        audio_events.append((0.12, clips[0]))
+        voice_index = 0
+        audio_events.append((0.12, clips[voice_index]))
+        voice_index += 1
         add_frames(1.05, 0, 0, 0)
         for row, _guess in enumerate(guesses):
-            audio_events.append((frame_no / FPS + 0.05, clips[row + 1]))
-            add_frames(0.25 + rng.random() * 0.16, row, 0, 0)
+            audio_events.append((frame_no / FPS + 0.05, clips[voice_index]))
+            voice_index += 1
+            add_frames(profile["pre"][0] + rng.random() * profile["pre"][1], row, 0, 0)
             for letters in range(1, 6):
-                add_frames(0.08, row, letters, 0, pressed_key=_guess[letters - 1])
-                add_frames(0.08 + rng.random() * 0.05, row, letters, 0)
-            add_frames(0.38 + rng.random() * 0.15, row, 5, 0)
+                add_frames(profile["press"], row, letters, 0, pressed_key=_guess[letters - 1])
+                add_frames(profile["between"][0] + rng.random() * profile["between"][1], row, letters, 0)
+            add_frames(profile["submit"][0] + rng.random() * profile["submit"][1], row, 5, 0)
             for letters in range(1, 6):
-                add_frames(0.24 + rng.random() * 0.08, row, 5, letters)
-            add_frames((1.65 if _guess == answer else 0.9) + rng.random() * 0.35, row + 1, 0, 0)
+                add_frames(profile["reveal"][0] + rng.random() * profile["reveal"][1], row, 5, letters)
+            audio_events.append((frame_no / FPS + 0.10, clips[voice_index]))
+            after_clip_duration = clip_durations[voice_index]
+            voice_index += 1
+            hold_base = profile["final_hold"] if _guess == answer else profile["hold"]
+            hold_seconds = max(hold_base[0] + rng.random() * hold_base[1], after_clip_duration + 0.32)
+            add_frames(hold_seconds, row + 1, 0, 0)
 
         add_frames(1.4, len(guesses), 0, 0)
         write_audio_timeline(audio_events, audio, frame_no / FPS)
@@ -456,8 +511,12 @@ def main():
                 "offset": offset,
                 "answer": answer,
                 "guesses": guesses,
-                "voice": voice,
-                "voice_timing": [{"at": round(start, 2), "line": voice[i]} for i, (start, _clip) in enumerate(audio_events)],
+                "choreography": profile["name"],
+                "voice": voice_lines,
+                "voice_timing": [
+                    {"at": round(start, 2), "line": voice_lines[clips.index(_clip)]}
+                    for start, _clip in audio_events
+                ],
                 "output": str(VIDEO_OUT),
             },
             indent=2,
