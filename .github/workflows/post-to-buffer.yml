@@ -1,0 +1,109 @@
+name: Post to Buffer
+
+on:
+  workflow_dispatch:
+    inputs:
+      fill_count:
+        description: "How many reels to create and add to Buffer"
+        required: false
+        default: "10"
+  schedule:
+    # Keeps Buffer topped up. Buffer decides actual publish times.
+    - cron: "0 */2 * * *"
+
+concurrency:
+  group: post-to-buffer
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  render-and-queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+      BUFFER_INSTAGRAM_CHANNEL_ID: ${{ secrets.BUFFER_INSTAGRAM_CHANNEL_ID }}
+      CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
+      CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+      CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+      CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      QUEUE_FILL_COUNT: ${{ github.event.inputs.fill_count || '10' }}
+      IGNORE_QUEUE_FULL: "1"
+      CLOUDINARY_RETENTION_DAYS: "4"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng fonts-dejavu-core
+          sudo apt-get install -y fonts-inter || true
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install --target .deps edge-tts
+
+      - name: Render and queue
+        run: |
+          count="${QUEUE_FILL_COUNT:-1}"
+          case "$count" in
+            ''|*[!0-9]*) count=1 ;;
+          esac
+          if [ "$count" -lt 1 ]; then count=1; fi
+          if [ "$count" -gt 10 ]; then count=10; fi
+          for i in $(seq 1 "$count"); do
+            echo "Rendering and queueing Wordle reel $i of $count"
+            ./scripts/render.sh
+            python scripts/post_to_buffer.py
+            if [ -f outputs/queue_full ]; then
+              echo "Buffer queue is full; stopping top-up."
+              break
+            fi
+            python scripts/advance_progress.py
+          done
+
+      - name: Clean old Cloudinary videos
+        if: always()
+        run: python scripts/cleanup_cloudinary.py
+
+      - name: Commit Wordle progress
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/progress.json
+          git diff --cached --quiet || git commit -m "Advance Wordle queue"
+          git push
+
+      - name: Upload render artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: thewordlestuff-render
+          path: |
+            outputs/thewordlestuff_mvp.mp4
+            outputs/thewordlestuff_storyboard.json
+          retention-days: 3
+
+      - name: Open failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Autopilot queue failed"
+          body="The Wordle queue workflow failed. Check this run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          existing="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
