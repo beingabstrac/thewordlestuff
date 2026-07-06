@@ -48,6 +48,16 @@ EDGE_VOICES = [
     "en-US-SteffanNeural",
 ]
 
+KOKORO_VOICES = [
+    "af_heart",
+    "am_adam",
+    "af_bella",
+    "am_michael",
+    "af_nicole",
+    "am_eric",
+]
+KOKORO_PIPELINE = None
+
 VOICE_OPENERS = [
     "Okay, let's see.",
     "Alright, let's try this.",
@@ -254,6 +264,16 @@ def spoken_word(word):
     return word.lower()
 
 
+def voice_text(text):
+    return (
+        text.replace("Wordle", "wordle")
+        .replace("Okay,", "Okay...")
+        .replace("Hmm,", "Hmm...")
+        .replace("Right,", "Right...")
+        .replace("Ah okay,", "Ah, okay...")
+    )
+
+
 def voice_before_guess(guess, answer, turn, total_turns, rng, has_mistype=False, previous_guesses=None, mood="calm", used_strategy_letters=None):
     if guess == answer:
         if turn == 1:
@@ -449,6 +469,40 @@ async def edge_voice(text, out_path, voice_index):
     mp3.unlink(missing_ok=True)
 
 
+def kokoro_voice(text, out_path, voice_index):
+    global KOKORO_PIPELINE
+    dep_paths = [Path(p) for p in os.getenv("TTS_DEPS_DIR", "").split(os.pathsep) if p]
+    dep_paths.append(ROOT / ".deps")
+    for deps in dep_paths:
+        if deps.exists() and str(deps) not in sys.path:
+            sys.path.insert(0, str(deps))
+
+    import numpy as np
+    import soundfile as sf
+    from kokoro import KPipeline
+
+    if KOKORO_PIPELINE is None:
+        KOKORO_PIPELINE = KPipeline(lang_code="a")
+
+    raw = out_path.with_suffix(".kokoro.wav")
+    voice = KOKORO_VOICES[voice_index % len(KOKORO_VOICES)]
+    speed = [0.96, 1.0, 0.98, 1.03, 0.94, 1.01][voice_index % 6]
+    chunks = []
+    generator = KOKORO_PIPELINE(voice_text(text), voice=voice, speed=speed, split_pattern=r"\n+")
+    for _graphemes, _phonemes, audio in generator:
+        chunks.append(np.asarray(audio, dtype=np.float32))
+    if not chunks:
+        raise RuntimeError("kokoro produced no audio")
+    sf.write(str(raw), np.concatenate(chunks), 24000)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(raw), "-ar", "44100", "-ac", "1", "-acodec", "pcm_s16le", str(out_path)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    raw.unlink(missing_ok=True)
+
+
 def soften_clip(path):
     tmp = path.with_suffix(".soft.wav")
     subprocess.run(
@@ -475,6 +529,13 @@ def soften_clip(path):
 
 
 def make_voice_clip(text, out_path, voice_index):
+    if os.getenv("TTS_ENGINE", "kokoro").lower() == "kokoro":
+        try:
+            kokoro_voice(text, out_path, voice_index)
+            soften_clip(out_path)
+            return
+        except Exception as exc:
+            print(f"kokoro unavailable, falling back to edge-tts: {exc}")
     try:
         asyncio.run(edge_voice(text, out_path, voice_index))
         soften_clip(out_path)

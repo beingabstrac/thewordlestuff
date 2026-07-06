@@ -22,7 +22,7 @@ permissions:
 jobs:
   render-and-queue:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     env:
       BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
       BUFFER_INSTAGRAM_CHANNEL_ID: ${{ secrets.BUFFER_INSTAGRAM_CHANNEL_ID }}
@@ -51,7 +51,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install --target .deps edge-tts
+          python -m pip install --target .deps edge-tts soundfile "kokoro>=0.9.4"
 
       - name: Render and queue
         run: |
