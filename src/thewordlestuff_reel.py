@@ -216,13 +216,13 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
-    draw.text((W / 2, 178), f"{title}   •   {subtitle}", font=F_TITLE, fill=MUTED, anchor="mm")
+    draw.text((W / 2, 232), f"{title}   •   {subtitle}", font=F_TITLE, fill=MUTED, anchor="mm")
 
     tile = 118
     gap = 10
     grid_w = 5 * tile + 4 * gap
     start_x = (W - grid_w) // 2
-    start_y = 285
+    start_y = 340
 
     visible_guesses = guesses[: active_row + 1]
     scores = [score_guess(g, answer) for g in visible_guesses]
@@ -258,7 +258,7 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
     key_h = 88
     key_gap = 10
     key_row_gap = 10
-    key_y = 1160
+    key_y = 1215
     for row_i, row in enumerate(KEY_ROWS):
         row_w = len(row) * key_w + (len(row) - 1) * key_gap
         x0 = (W - row_w) // 2
@@ -276,7 +276,7 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
             draw.rectangle((x, y, x + key_w, y + key_h), fill=fill)
             text_center(draw, (x, y, key_w, key_h), ch, F_KEY, "#ffffff" if state else TEXT)
 
-    draw.text((W / 2, 1625), "@thewordlestuff", font=F_HANDLE, fill="#111111", anchor="mm")
+    draw.text((W / 2, 1680), "@thewordlestuff", font=F_HANDLE, fill="#111111", anchor="mm")
     return img
 
 
