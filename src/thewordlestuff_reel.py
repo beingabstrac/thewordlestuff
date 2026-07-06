@@ -40,27 +40,30 @@ KEY_BG = "#d3d6da"
 KEY_ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"]
 
 EDGE_VOICES = [
-    "en-US-AndrewMultilingualNeural",
-    "en-US-AvaMultilingualNeural",
-    "en-US-BrianMultilingualNeural",
-    "en-US-EmmaMultilingualNeural",
+    "en-US-JennyNeural",
+    "en-US-GuyNeural",
+    "en-US-AriaNeural",
+    "en-US-DavisNeural",
+    "en-US-NancyNeural",
+    "en-US-SteffanNeural",
 ]
 
 VOICE_OPENERS = [
-    "Okay, let's play this one out.",
-    "Alright, let's see where this goes.",
-    "Okay, new one. Let's work through it.",
+    "Okay, let's see.",
+    "Alright, let's try this.",
+    "Okay, new one.",
+    "Let's work through it.",
 ]
 
 VOICE_REACTIONS = {
-    "miss": ["Not much there.", "Mostly a cleanup guess.", "That clears a few letters at least."],
-    "some": ["We got something.", "That gives us a little direction.", "Not amazing, but it helps."],
-    "good": ["That's actually useful.", "Now we're getting somewhere.", "That narrows it down a lot."],
-    "close": ["Oh, that's close.", "I think I can see it now.", "That feels one move away."],
+    "miss": ["not much there.", "mostly a cleanup guess.", "that clears a few letters at least."],
+    "some": ["that's something.", "that gives us a little direction.", "not amazing, but it helps.", "at least that helps a bit."],
+    "good": ["that's actually useful.", "now we're getting somewhere.", "that narrows it down a lot."],
+    "close": ["that's close.", "I think I can see it now.", "that feels one move away."],
     "final": ["Yeah, this should be it.", "I think this is the one.", "This has to be it."],
 }
 
-VOICE_FILLERS = ["Hmm.", "Umm, okay.", "Right.", "Ah, okay.", "Okay."]
+VOICE_FILLERS = ["Hmm", "Okay", "Right", "Ah okay"]
 VOICE_HESITATIONS = ["Wait no", "Actually", "Hold on", "I might be wrong, but", "Let me try"]
 MOODS = ["calm", "rushed", "uncertain", "locked_in"]
 
@@ -221,7 +224,7 @@ def choose_guesses(answer, words):
     return guesses[:6]
 
 
-def strategy_line(guess, answer, previous_guesses, rng):
+def strategy_line(guess, answer, previous_guesses, rng, used_letters=None):
     if not previous_guesses:
         return None
     scores = [score_guess(g, answer) for g in previous_guesses]
@@ -233,67 +236,85 @@ def strategy_line(guess, answer, previous_guesses, rng):
                 locked.append(old_guess[i])
             elif state == "present":
                 misplaced.append(old_guess[i])
-    if locked and rng.random() < 0.45:
-        letter = rng.choice(locked)
-        return f"{letter} is locked in, so {guess} makes sense."
-    if misplaced and rng.random() < 0.45:
-        letter = rng.choice(misplaced)
-        return f"We need to move the {letter}. Maybe {guess}."
+    used_letters = used_letters if used_letters is not None else set()
+    fresh_locked = [letter for letter in locked if letter not in used_letters]
+    fresh_misplaced = [letter for letter in misplaced if letter not in used_letters]
+    if fresh_locked and rng.random() < 0.28:
+        letter = rng.choice(fresh_locked)
+        used_letters.add(letter)
+        return f"We've got the {letter.upper()} in place, so {spoken_word(guess)} makes sense."
+    if fresh_misplaced and rng.random() < 0.28:
+        letter = rng.choice(fresh_misplaced)
+        used_letters.add(letter)
+        return f"We need to move the {letter.upper()}. Maybe {spoken_word(guess)}."
     return None
 
 
-def voice_before_guess(guess, answer, turn, total_turns, rng, has_mistype=False, previous_guesses=None, mood="calm"):
+def spoken_word(word):
+    return word.lower()
+
+
+def voice_before_guess(guess, answer, turn, total_turns, rng, has_mistype=False, previous_guesses=None, mood="calm", used_strategy_letters=None):
     if guess == answer:
         if turn == 1:
-            return f"This is a wild first guess, but I'm trying {answer}."
+            return f"This is a wild first guess, but I'm trying {spoken_word(answer)}."
         if turn == 2:
-            return f"I think we can jump straight to {answer}."
+            return f"I think we can jump straight to {spoken_word(answer)}."
         if turn == total_turns and turn >= 5:
-            return f"I don't want to overthink it now. {answer}."
-        return f"I think it's {answer}."
+            return f"I don't want to overthink it now. {spoken_word(answer)}."
+        return f"I think it's {spoken_word(answer)}."
     if turn == 1:
-        return f"I'll start with {guess}."
+        return f"I'll start with {spoken_word(guess)}."
     if total_turns >= 6 and turn >= 5:
-        return f"We're running out of room. Let's try {guess}."
+        return f"We're running out of room. Let's try {spoken_word(guess)}."
     if has_mistype:
-        return f"{rng.choice(['Wait no', 'Actually', 'Hold on'])}... let's do {guess}."
-    strategy = strategy_line(guess, answer, previous_guesses or [], rng)
+        return f"{rng.choice(['Wait no', 'Actually', 'Hold on'])}... let's do {spoken_word(guess)}."
+    strategy = strategy_line(guess, answer, previous_guesses or [], rng, used_strategy_letters)
     if strategy:
         return strategy
     if mood == "rushed" and rng.random() < 0.45:
-        return f"Quick one, {guess}."
+        return f"Quick one, {spoken_word(guess)}."
     if mood == "uncertain" and rng.random() < 0.45:
-        return f"I'm not fully sure, but maybe {guess}."
+        return f"I'm not fully sure, but maybe {spoken_word(guess)}."
     if rng.random() < 0.28:
-        return f"{rng.choice(VOICE_HESITATIONS)} {guess}."
+        return f"{rng.choice(VOICE_HESITATIONS)} {spoken_word(guess)}."
     openers = ["Let's try", "Maybe", "I'll test", "What about", "Let's check"]
-    return f"{rng.choice(openers)} {guess}."
+    return f"{rng.choice(openers)} {spoken_word(guess)}."
 
 
-def voice_after_guess(guess, answer, turn, total_turns, rng):
+def choose_reaction(category, rng, used_reactions):
+    options = VOICE_REACTIONS[category]
+    fresh = [option for option in options if option not in used_reactions]
+    choice = rng.choice(fresh or options)
+    used_reactions.add(choice)
+    return choice
+
+
+def voice_after_guess(guess, answer, turn, total_turns, rng, used_reactions=None):
+    used_reactions = used_reactions if used_reactions is not None else set()
     if guess == answer:
         if turn == 1:
-            return f"No way. First try. It was {answer}."
+            return f"No way. First try. It was {spoken_word(answer)}."
         if turn == 2:
-            return f"Okay, second try. I'll take that. {answer}."
+            return f"Okay, second try. I'll take that. {spoken_word(answer)}."
         if turn >= 6:
-            return f"Finally. Last try. It was {answer}."
+            return f"Finally. Last try. It was {spoken_word(answer)}."
         if turn >= 5:
-            return f"That was close. {answer}. Got it."
-        return f"{rng.choice(['Yep.', 'There we go.', 'Nice.'])} {answer}. There it is."
+            return f"That was close. {spoken_word(answer)}. Got it."
+        return f"{rng.choice(['Yep', 'There we go', 'Nice'])}, {spoken_word(answer)}. There it is."
     score = score_guess(guess, answer)
     greens = score.count("correct")
     yellows = score.count("present")
     filler = rng.choice(VOICE_FILLERS)
     if total_turns >= 6 and turn >= 5 and greens + yellows < 3:
-        return f"{filler} That's not enough. This is getting tight."
+        return f"{filler}, that's not enough. This is getting tight."
     if greens >= 3 or greens + yellows >= 4:
-        return f"{filler} {rng.choice(VOICE_REACTIONS['close'])}"
+        return f"{filler}, {choose_reaction('close', rng, used_reactions)}"
     if greens >= 2 or greens + yellows >= 3:
-        return f"{filler} {rng.choice(VOICE_REACTIONS['good'])}"
+        return f"{filler}, {choose_reaction('good', rng, used_reactions)}"
     if greens + yellows >= 1:
-        return f"{filler} {rng.choice(VOICE_REACTIONS['some'])}"
-    return f"{filler} {rng.choice(VOICE_REACTIONS['miss'])}"
+        return f"{filler}, {choose_reaction('some', rng, used_reactions)}"
+    return f"{filler}, {choose_reaction('miss', rng, used_reactions)}"
 
 
 def tile_color(state):
@@ -417,7 +438,7 @@ async def edge_voice(text, out_path, voice_index):
 
     voice = EDGE_VOICES[voice_index % len(EDGE_VOICES)]
     mp3 = out_path.with_suffix(".mp3")
-    communicate = edge_tts.Communicate(text, voice=voice, rate="+8%", pitch="+0Hz")
+    communicate = edge_tts.Communicate(text, voice=voice, rate="-5%", pitch="-1Hz")
     await communicate.save(str(mp3))
     subprocess.run(
         ["ffmpeg", "-y", "-i", str(mp3), "-ar", "44100", "-ac", "1", "-acodec", "pcm_s16le", str(out_path)],
@@ -428,9 +449,35 @@ async def edge_voice(text, out_path, voice_index):
     mp3.unlink(missing_ok=True)
 
 
+def soften_clip(path):
+    tmp = path.with_suffix(".soft.wav")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(path),
+            "-af",
+            "afade=t=in:st=0:d=0.025,areverse,afade=t=in:st=0:d=0.035,areverse",
+            "-ar",
+            "44100",
+            "-ac",
+            "1",
+            "-acodec",
+            "pcm_s16le",
+            str(tmp),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    tmp.replace(path)
+
+
 def make_voice_clip(text, out_path, voice_index):
     try:
         asyncio.run(edge_voice(text, out_path, voice_index))
+        soften_clip(out_path)
         return
     except Exception as exc:
         print(f"edge-tts unavailable, falling back to system voice: {exc}")
@@ -445,9 +492,11 @@ def make_voice_clip(text, out_path, voice_index):
             stderr=subprocess.DEVNULL,
         )
         aiff.unlink(missing_ok=True)
+        soften_clip(out_path)
         return
     if shutil.which("espeak-ng"):
         subprocess.run(["espeak-ng", "-s", "165", "-w", str(out_path), text], check=True)
+        soften_clip(out_path)
         return
     with wave.open(str(out_path), "w") as wf:
         wf.setnchannels(1)
@@ -538,6 +587,8 @@ def main():
     mood = rng.choice(MOODS)
     mistakes = mistype_plan(guesses, words, rng)
     voice_lines = [f"{rng.choice(VOICE_OPENERS)} Wordle number {puzzle['id']}."]
+    used_strategy_letters = set()
+    used_reactions = set()
     for i, guess in enumerate(guesses, 1):
         voice_lines.append(
             voice_before_guess(
@@ -549,9 +600,10 @@ def main():
                 i - 1 in mistakes,
                 guesses[: i - 1],
                 mood,
+                used_strategy_letters,
             )
         )
-        voice_lines.append(voice_after_guess(guess, answer, i, len(guesses), rng))
+        voice_lines.append(voice_after_guess(guess, answer, i, len(guesses), rng, used_reactions))
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
