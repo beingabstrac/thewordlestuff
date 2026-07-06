@@ -100,11 +100,17 @@ def load_words():
 
 
 def font(size, bold=False):
+    bundled = ROOT / "assets" / "fonts" / "Inter.ttf"
+    if bundled.exists():
+        loaded = ImageFont.truetype(str(bundled), size)
+        loaded.set_variation_by_axes([14, 700 if bold else 400])
+        return loaded
     candidates = [
+        "/usr/share/fonts/truetype/inter/Inter-Bold.ttf" if bold else "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
+        "/usr/share/fonts/truetype/inter-vf/Inter.var.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/Library/Fonts/SF-Pro-Display-Bold.otf" if bold else "/Library/Fonts/SF-Pro-Display-Regular.otf",
         "/Library/Fonts/SF-Pro-Text-Bold.otf" if bold else "/Library/Fonts/SF-Pro-Text-Regular.otf",
-        "/usr/share/fonts/truetype/inter/Inter-Bold.ttf" if bold else "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
     ]
     for candidate in candidates:
