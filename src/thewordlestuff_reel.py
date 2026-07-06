@@ -257,6 +257,7 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
     key_w = 90
     key_h = 88
     key_gap = 10
+    key_row_gap = 10
     key_y = 1160
     for row_i, row in enumerate(KEY_ROWS):
         row_w = len(row) * key_w + (len(row) - 1) * key_gap
@@ -267,7 +268,7 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
             x0 += 42
         for i, ch in enumerate(row):
             x = x0 + i * (key_w + key_gap)
-            y = key_y + row_i * (key_h + 18)
+            y = key_y + row_i * (key_h + key_row_gap)
             state = key_states.get(ch)
             fill = tile_color(state) if state else KEY_BG
             if pressed_key == ch:
@@ -409,7 +410,7 @@ def main():
         frame_no = 0
         audio_events = []
 
-        def add_frames(seconds, active_row, typed_letters, reveal_letters, card_subtitle=None, pressed_key=None):
+        def add_frames(seconds, active_row, typed_letters, reveal_letters, pressed_key=None):
             nonlocal frame_no
             count = max(1, int(round(seconds * FPS)))
             for _ in range(count):
@@ -420,7 +421,7 @@ def main():
                     typed_letters,
                     reveal_letters,
                     title,
-                    card_subtitle or subtitle,
+                    subtitle,
                     pressed_key,
                 )
                 img.save(frames_dir / f"frame_{frame_no:05d}.png")
@@ -439,11 +440,11 @@ def main():
                 add_frames(0.24 + rng.random() * 0.08, row, 5, letters)
             add_frames((1.65 if _guess == answer else 0.9) + rng.random() * 0.35, row + 1, 0, 0)
 
-        add_frames(1.4, len(guesses), 0, 0, "Did you get it before the reveal?")
+        add_frames(1.4, len(guesses), 0, 0)
         write_audio_timeline(audio_events, audio, frame_no / FPS)
         audio_seconds = wav_duration(audio)
         while frame_no / FPS < audio_seconds + 0.2:
-            add_frames(0.25, len(guesses), 0, 0, "Did you get it before the reveal?")
+            add_frames(0.25, len(guesses), 0, 0)
 
         render_video(frames_dir, audio, frame_no)
 
