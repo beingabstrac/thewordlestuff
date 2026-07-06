@@ -188,7 +188,10 @@ def choose_guesses(answer, words):
     rng = random.Random(hashlib.sha256(answer.encode()).hexdigest())
     openers = [w for w in words["openers"] if w != answer]
     valid = [w for w in words["valid"] if w != answer]
-    target_len = rng.choice([4, 4, 5, 5, 6])
+    target_len = rng.choices([1, 2, 3, 4, 5, 6], weights=[3, 8, 18, 30, 26, 15], k=1)[0]
+    if target_len == 1:
+        return [answer]
+
     guesses = [rng.choice(openers)]
     scores = [score_guess(guesses[0], answer)]
 
@@ -209,22 +212,40 @@ def choose_guesses(answer, words):
     return guesses[:6]
 
 
-def voice_before_guess(guess, answer, turn, rng):
+def voice_before_guess(guess, answer, turn, total_turns, rng):
     if guess == answer:
+        if turn == 1:
+            return f"This is a wild first guess, but I'm trying {answer}."
+        if turn == 2:
+            return f"I think we can jump straight to {answer}."
+        if turn == total_turns and turn >= 5:
+            return f"I don't want to overthink it now. {answer}."
         return f"I think it's {answer}."
     if turn == 1:
         return f"I'll start with {guess}."
+    if total_turns >= 6 and turn >= 5:
+        return f"We're running out of room. Let's try {guess}."
     openers = ["Let's try", "Maybe", "I'll test", "What about", "Let's check"]
     return f"{rng.choice(openers)} {guess}."
 
 
-def voice_after_guess(guess, answer, turn, rng):
+def voice_after_guess(guess, answer, turn, total_turns, rng):
     if guess == answer:
+        if turn == 1:
+            return f"No way. First try. It was {answer}."
+        if turn == 2:
+            return f"Okay, second try. I'll take that. {answer}."
+        if turn >= 6:
+            return f"Finally. Last try. It was {answer}."
+        if turn >= 5:
+            return f"That was close. {answer}. Got it."
         return f"{rng.choice(['Yep.', 'There we go.', 'Nice.'])} {answer}. There it is."
     score = score_guess(guess, answer)
     greens = score.count("correct")
     yellows = score.count("present")
     filler = rng.choice(VOICE_FILLERS)
+    if total_turns >= 6 and turn >= 5 and greens + yellows < 3:
+        return f"{filler} That's not enough. This is getting tight."
     if greens >= 3 or greens + yellows >= 4:
         return f"{filler} {rng.choice(VOICE_REACTIONS['close'])}"
     if greens >= 2 or greens + yellows >= 3:
@@ -443,8 +464,8 @@ def main():
     profile = rng.choice(CHOREO_PROFILES)
     voice_lines = [f"{rng.choice(VOICE_OPENERS)} Wordle number {puzzle['id']}."]
     for i, guess in enumerate(guesses, 1):
-        voice_lines.append(voice_before_guess(guess, answer, i, rng))
-        voice_lines.append(voice_after_guess(guess, answer, i, rng))
+        voice_lines.append(voice_before_guess(guess, answer, i, len(guesses), rng))
+        voice_lines.append(voice_after_guess(guess, answer, i, len(guesses), rng))
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -523,6 +544,7 @@ def main():
                 "offset": offset,
                 "answer": answer,
                 "guesses": guesses,
+                "solve_turn": len(guesses),
                 "choreography": profile["name"],
                 "voice": voice_lines,
                 "voice_timing": [
