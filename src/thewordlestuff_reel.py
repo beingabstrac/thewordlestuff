@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+import math
 import os
 import random
 import shutil
@@ -52,15 +53,16 @@ VOICE_OPENERS = [
 ]
 
 VOICE_REACTIONS = {
-    "miss": ["Hmm, not much there.", "Okay, mostly a cleanup guess.", "That clears a few letters at least."],
-    "some": ["Okay, we got something.", "That gives us a little direction.", "Not amazing, but it helps."],
-    "good": ["Wait, that's actually useful.", "Now we're getting somewhere.", "That narrows it down a lot."],
+    "miss": ["Not much there.", "Mostly a cleanup guess.", "That clears a few letters at least."],
+    "some": ["We got something.", "That gives us a little direction.", "Not amazing, but it helps."],
+    "good": ["That's actually useful.", "Now we're getting somewhere.", "That narrows it down a lot."],
     "close": ["Oh, that's close.", "I think I can see it now.", "That feels one move away."],
     "final": ["Yeah, this should be it.", "I think this is the one.", "This has to be it."],
 }
 
 VOICE_FILLERS = ["Hmm.", "Umm, okay.", "Right.", "Ah, okay.", "Okay."]
 VOICE_HESITATIONS = ["Wait no", "Actually", "Hold on", "I might be wrong, but", "Let me try"]
+MOODS = ["calm", "rushed", "uncertain", "locked_in"]
 
 CHOREO_PROFILES = [
     {
@@ -219,7 +221,28 @@ def choose_guesses(answer, words):
     return guesses[:6]
 
 
-def voice_before_guess(guess, answer, turn, total_turns, rng, has_mistype=False):
+def strategy_line(guess, answer, previous_guesses, rng):
+    if not previous_guesses:
+        return None
+    scores = [score_guess(g, answer) for g in previous_guesses]
+    locked = []
+    misplaced = []
+    for old_guess, score in zip(previous_guesses, scores):
+        for i, state in enumerate(score):
+            if state == "correct":
+                locked.append(old_guess[i])
+            elif state == "present":
+                misplaced.append(old_guess[i])
+    if locked and rng.random() < 0.45:
+        letter = rng.choice(locked)
+        return f"{letter} is locked in, so {guess} makes sense."
+    if misplaced and rng.random() < 0.45:
+        letter = rng.choice(misplaced)
+        return f"We need to move the {letter}. Maybe {guess}."
+    return None
+
+
+def voice_before_guess(guess, answer, turn, total_turns, rng, has_mistype=False, previous_guesses=None, mood="calm"):
     if guess == answer:
         if turn == 1:
             return f"This is a wild first guess, but I'm trying {answer}."
@@ -234,6 +257,13 @@ def voice_before_guess(guess, answer, turn, total_turns, rng, has_mistype=False)
         return f"We're running out of room. Let's try {guess}."
     if has_mistype:
         return f"{rng.choice(['Wait no', 'Actually', 'Hold on'])}... let's do {guess}."
+    strategy = strategy_line(guess, answer, previous_guesses or [], rng)
+    if strategy:
+        return strategy
+    if mood == "rushed" and rng.random() < 0.45:
+        return f"Quick one, {guess}."
+    if mood == "uncertain" and rng.random() < 0.45:
+        return f"I'm not fully sure, but maybe {guess}."
     if rng.random() < 0.28:
         return f"{rng.choice(VOICE_HESITATIONS)} {guess}."
     openers = ["Let's try", "Maybe", "I'll test", "What about", "Let's check"]
@@ -293,7 +323,18 @@ def text_center(draw, xy, text, font_obj, fill):
     )
 
 
-def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title, subtitle, pressed_key=None, typed_word=None):
+def draw_frame(
+    guesses,
+    answer,
+    active_row,
+    typed_letters,
+    reveal_letters,
+    title,
+    subtitle,
+    pressed_key=None,
+    typed_word=None,
+    blink=False,
+):
     img = Image.new("RGB", (W, H), BG)
     draw = ImageDraw.Draw(img)
 
@@ -335,6 +376,9 @@ def draw_frame(guesses, answer, active_row, typed_letters, reveal_letters, title
             draw.rectangle((x, y, x + tile, y + tile), fill=fill, outline=border, width=4)
             if letter:
                 text_center(draw, (x, y, tile, tile), letter, F_TILE, "#ffffff" if fill != BG else TEXT)
+            elif blink and r == active_row and c == typed_letters and reveal_letters == 0:
+                cursor_x = x + tile // 2
+                draw.line((cursor_x, y + 30, cursor_x, y + tile - 30), fill="#878a8c", width=5)
 
     key_w = 90
     key_h = 88
@@ -491,10 +535,22 @@ def main():
     guesses = choose_guesses(answer, words)
     rng = random.Random(answer)
     profile = rng.choice(CHOREO_PROFILES)
+    mood = rng.choice(MOODS)
     mistakes = mistype_plan(guesses, words, rng)
     voice_lines = [f"{rng.choice(VOICE_OPENERS)} Wordle number {puzzle['id']}."]
     for i, guess in enumerate(guesses, 1):
-        voice_lines.append(voice_before_guess(guess, answer, i, len(guesses), rng, i - 1 in mistakes))
+        voice_lines.append(
+            voice_before_guess(
+                guess,
+                answer,
+                i,
+                len(guesses),
+                rng,
+                i - 1 in mistakes,
+                guesses[: i - 1],
+                mood,
+            )
+        )
         voice_lines.append(voice_after_guess(guess, answer, i, len(guesses), rng))
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -514,10 +570,26 @@ def main():
         frame_no = 0
         audio_events = []
 
-        def add_frames(seconds, active_row, typed_letters, reveal_letters, pressed_key=None, typed_word=None):
+        drift_seed = random.Random(f"{answer}:drift")
+        drift_phase_x = drift_seed.random() * math.tau
+        drift_phase_y = drift_seed.random() * math.tau
+
+        def apply_drift(img, local_frame):
+            if os.getenv("DISABLE_CAMERA_DRIFT") == "1":
+                return img
+            dx = int(round(1.6 * math.sin(local_frame / 53 + drift_phase_x)))
+            dy = int(round(1.2 * math.sin(local_frame / 67 + drift_phase_y)))
+            if dx == 0 and dy == 0:
+                return img
+            canvas = Image.new("RGB", (W, H), BG)
+            canvas.paste(img, (dx, dy))
+            return canvas
+
+        def add_frames(seconds, active_row, typed_letters, reveal_letters, pressed_key=None, typed_word=None, cursor=False):
             nonlocal frame_no
             count = max(1, int(round(seconds * FPS)))
             for _ in range(count):
+                blink = cursor and (frame_no // 12) % 2 == 0
                 img = draw_frame(
                     guesses,
                     answer,
@@ -528,7 +600,9 @@ def main():
                     subtitle,
                     pressed_key,
                     typed_word,
+                    blink,
                 )
+                img = apply_drift(img, frame_no)
                 img.save(frames_dir / f"frame_{frame_no:05d}.png")
                 frame_no += 1
 
@@ -541,7 +615,7 @@ def main():
         voice_index = 0
         audio_events.append((0.12, clips[voice_index]))
         voice_index += 1
-        add_frames(1.05, 0, 0, 0)
+        add_frames(1.05, 0, 0, 0, cursor=True)
         for row, _guess in enumerate(guesses):
             audio_events.append((frame_no / FPS + 0.05, clips[voice_index]))
             voice_index += 1
@@ -550,21 +624,21 @@ def main():
                 thinking += rng.uniform(0.35, 0.95)
             elif rng.random() < 0.22:
                 thinking += rng.uniform(0.20, 0.55)
-            add_frames(thinking, row, 0, 0)
+            add_frames(thinking, row, 0, 0, cursor=True)
 
             if row in mistakes:
                 wrong_word, wrong_letters = mistakes[row]
                 for letters in range(1, wrong_letters + 1):
                     add_frames(profile["press"], row, letters, 0, pressed_key=wrong_word[letters - 1], typed_word=wrong_word)
-                    add_frames(0.07 + rng.random() * 0.07, row, letters, 0, typed_word=wrong_word)
-                add_frames(0.18 + rng.random() * 0.18, row, wrong_letters, 0, typed_word=wrong_word)
+                    add_frames(0.07 + rng.random() * 0.07, row, letters, 0, typed_word=wrong_word, cursor=True)
+                add_frames(0.18 + rng.random() * 0.18, row, wrong_letters, 0, typed_word=wrong_word, cursor=True)
                 for letters in range(wrong_letters - 1, -1, -1):
-                    add_frames(0.08 + rng.random() * 0.04, row, letters, 0, typed_word=wrong_word)
-                add_frames(0.22 + rng.random() * 0.18, row, 0, 0)
+                    add_frames(0.08 + rng.random() * 0.04, row, letters, 0, typed_word=wrong_word, cursor=True)
+                add_frames(0.22 + rng.random() * 0.18, row, 0, 0, cursor=True)
 
             for letters in range(1, 6):
                 add_frames(profile["press"], row, letters, 0, pressed_key=_guess[letters - 1])
-                add_frames(profile["between"][0] + rng.random() * profile["between"][1], row, letters, 0)
+                add_frames(profile["between"][0] + rng.random() * profile["between"][1], row, letters, 0, cursor=True)
             add_frames(profile["submit"][0] + rng.random() * profile["submit"][1], row, 5, 0)
             for letters in range(1, 6):
                 add_frames(profile["reveal"][0] + rng.random() * profile["reveal"][1], row, 5, letters)
@@ -572,7 +646,8 @@ def main():
             after_clip_duration = clip_durations[voice_index]
             voice_index += 1
             hold_base = profile["final_hold"] if _guess == answer else profile["hold"]
-            hold_seconds = max(hold_base[0] + rng.random() * hold_base[1], after_clip_duration + 0.32)
+            final_bonus = rng.uniform(0.25, 0.75) if _guess == answer else 0
+            hold_seconds = max(hold_base[0] + rng.random() * hold_base[1] + final_bonus, after_clip_duration + 0.32)
             add_frames(hold_seconds, row + 1, 0, 0)
 
         add_frames(1.4, len(guesses), 0, 0)
@@ -594,6 +669,7 @@ def main():
                 "solve_turn": len(guesses),
                 "mistake_rows": sorted(row + 1 for row in mistakes),
                 "choreography": profile["name"],
+                "mood": mood,
                 "voice": voice_lines,
                 "voice_timing": [
                     {"at": round(start, 2), "line": voice_lines[clips.index(_clip)]}
