@@ -387,7 +387,7 @@ def main():
     offset = (requested_date - START_DATE).days
     puzzle = fetch_wordle_puzzle(requested_date)
     answer = puzzle["answer"]
-    title = f"WORDLE #{puzzle['id']}"
+    title = f"Wordle #{puzzle['id']}"
     subtitle = pretty_date(datetime.strptime(puzzle["date"], "%Y-%m-%d").date())
     guesses = choose_guesses(answer, words)
     rng = random.Random(answer)
