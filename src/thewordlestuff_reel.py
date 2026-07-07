@@ -710,7 +710,7 @@ def main():
             nonlocal frame_no
             count = max(1, int(round(seconds * FPS)))
             for _ in range(count):
-                blink = cursor and (frame_no // 12) % 2 == 0
+                blink = cursor
                 img = draw_frame(
                     guesses,
                     answer,
