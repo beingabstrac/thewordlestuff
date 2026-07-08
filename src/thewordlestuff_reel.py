@@ -12,6 +12,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import wave
+from array import array
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -583,24 +584,49 @@ def wav_duration(path):
 def write_audio_timeline(events, out_path, total_seconds):
     framerate = 44100
     sampwidth = 2
-    cursor = 0.0
-
-    def silence(seconds):
-        return b"\x00" * max(0, int(round(seconds * framerate)) * sampwidth)
+    total_samples = max(1, int(round((total_seconds + 0.25) * framerate)))
+    mix = array("i", [0]) * total_samples
 
     with wave.open(str(out_path), "wb") as out:
         out.setnchannels(1)
         out.setsampwidth(sampwidth)
         out.setframerate(framerate)
         for start, clip_path in events:
-            if start > cursor:
-                out.writeframes(silence(start - cursor))
-                cursor = start
+            start_sample = max(0, int(round(start * framerate)))
             with wave.open(str(clip_path), "rb") as clip:
-                out.writeframes(clip.readframes(clip.getnframes()))
-                cursor += clip.getnframes() / clip.getframerate()
-        if total_seconds > cursor:
-            out.writeframes(silence(total_seconds - cursor))
+                frames = array("h")
+                frames.frombytes(clip.readframes(clip.getnframes()))
+            for i, sample in enumerate(frames):
+                pos = start_sample + i
+                if pos >= total_samples:
+                    break
+                mix[pos] += sample
+        clipped = array("h", (max(-32768, min(32767, sample)) for sample in mix))
+        out.writeframes(clipped.tobytes())
+
+
+def write_sfx(path, kind):
+    framerate = 44100
+    specs = {
+        "key": (0.030, 880, 1150),
+        "delete": (0.040, 420, 1200),
+        "submit": (0.045, 260, 1000),
+        "reveal": (0.050, 620, 900),
+    }
+    seconds, freq, amp = specs[kind]
+    samples = []
+    total = int(seconds * framerate)
+    for i in range(total):
+        t = i / framerate
+        env = math.exp(-70 * t)
+        wave_a = math.sin(2 * math.pi * freq * t)
+        wave_b = 0.35 * math.sin(2 * math.pi * (freq * 1.8) * t)
+        samples.append(int(amp * env * (wave_a + wave_b)))
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(framerate)
+        out.writeframes(array("h", samples).tobytes())
 
 
 def render_video(frames_dir, audio_path, total_frames):
@@ -642,6 +668,20 @@ def mistype_plan(guesses, words, rng):
     return mistakes
 
 
+def hesitation_plan(guesses, mistakes, rng):
+    plan = {}
+    for row, _guess in enumerate(guesses):
+        if row in mistakes or row == len(guesses) - 1:
+            continue
+        if rng.random() < 0.34:
+            plan[row] = {
+                "at": rng.choice([2, 3, 4]),
+                "delete": rng.random() < 0.45,
+                "pause": rng.uniform(0.22, 0.58),
+            }
+    return plan
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     words = load_words()
@@ -656,6 +696,7 @@ def main():
     profile = rng.choice(CHOREO_PROFILES)
     mood = rng.choice(MOODS)
     mistakes = mistype_plan(guesses, words, rng)
+    hesitations = hesitation_plan(guesses, mistakes, rng)
     voice_lines = [f"{rng.choice(VOICE_OPENERS)} Wordle number {puzzle['id']}."]
     used_strategy_letters = set()
     used_reactions = set()
@@ -679,18 +720,29 @@ def main():
         tmp = Path(tmp)
         frames_dir = tmp / "frames"
         clips_dir = tmp / "clips"
+        sfx_dir = tmp / "sfx"
         frames_dir.mkdir()
         clips_dir.mkdir()
+        sfx_dir.mkdir()
         audio = tmp / "voice.wav"
+        sfx = {}
+        for kind in ["key", "delete", "submit", "reveal"]:
+            sfx[kind] = sfx_dir / f"{kind}.wav"
+            write_sfx(sfx[kind], kind)
         clips = []
         clip_durations = []
+        clip_lines = {}
         for i, line in enumerate(voice_lines):
             clip = clips_dir / f"voice_{i:02d}.wav"
             make_voice_clip(line, clip, puzzle["id"])
             clips.append(clip)
+            clip_lines[clip] = line
             clip_durations.append(wav_duration(clip))
         frame_no = 0
         audio_events = []
+
+        def add_sfx(kind, delay=0.0):
+            audio_events.append((frame_no / FPS + delay, sfx[kind]))
 
         def apply_drift(img, local_frame):
             if os.getenv("ENABLE_CAMERA_DRIFT") != "1":
@@ -728,8 +780,13 @@ def main():
                 frame_no += 1
 
         if os.getenv("DISABLE_FIRST_FRAME_COVER") != "1":
-            cover_row = min(max(2, len(guesses) // 2), max(1, len(guesses) - 1))
-            cover = draw_frame(guesses, answer, cover_row, 0, 0, title, subtitle)
+            cover_rng = random.Random(f"{answer}:cover")
+            max_filled = max(1, len(guesses) - 1)
+            cover_row = min(max_filled, cover_rng.choice([2, 3, 3, 4]))
+            cover_typed = 0
+            if cover_row < len(guesses) and cover_rng.random() < 0.35:
+                cover_typed = cover_rng.choice([2, 3])
+            cover = draw_frame(guesses, answer, cover_row, cover_typed, 0, title, subtitle)
             cover.save(frames_dir / f"frame_{frame_no:05d}.png")
             frame_no += 1
 
@@ -750,18 +807,32 @@ def main():
             if row in mistakes:
                 wrong_word, wrong_letters = mistakes[row]
                 for letters in range(1, wrong_letters + 1):
+                    add_sfx("key")
                     add_frames(profile["press"], row, letters, 0, pressed_key=wrong_word[letters - 1], typed_word=wrong_word)
                     add_frames(0.07 + rng.random() * 0.07, row, letters, 0, typed_word=wrong_word, cursor=True)
                 add_frames(0.18 + rng.random() * 0.18, row, wrong_letters, 0, typed_word=wrong_word, cursor=True)
                 for letters in range(wrong_letters - 1, -1, -1):
+                    add_sfx("delete")
                     add_frames(0.08 + rng.random() * 0.04, row, letters, 0, typed_word=wrong_word, cursor=True)
                 add_frames(0.22 + rng.random() * 0.18, row, 0, 0, cursor=True)
 
+            hesitation = hesitations.get(row)
             for letters in range(1, 6):
+                add_sfx("key")
                 add_frames(profile["press"], row, letters, 0, pressed_key=_guess[letters - 1])
+                if hesitation and letters == hesitation["at"]:
+                    add_frames(0.14 + hesitation["pause"], row, letters, 0, cursor=True)
+                    if hesitation["delete"]:
+                        add_sfx("delete")
+                        add_frames(0.09 + rng.random() * 0.04, row, letters - 1, 0, cursor=True)
+                        add_frames(0.14 + rng.random() * 0.16, row, letters - 1, 0, cursor=True)
+                        add_sfx("key")
+                        add_frames(profile["press"], row, letters, 0, pressed_key=_guess[letters - 1])
                 add_frames(profile["between"][0] + rng.random() * profile["between"][1], row, letters, 0, cursor=True)
+            add_sfx("submit")
             add_frames(profile["submit"][0] + rng.random() * profile["submit"][1], row, 5, 0)
             for letters in range(1, 6):
+                add_sfx("reveal")
                 add_frames(profile["reveal"][0] + rng.random() * profile["reveal"][1], row, 5, letters)
             audio_events.append((frame_no / FPS + 0.10, clips[voice_index]))
             after_clip_duration = clip_durations[voice_index]
@@ -789,12 +860,14 @@ def main():
                 "guesses": guesses,
                 "solve_turn": len(guesses),
                 "mistake_rows": sorted(row + 1 for row in mistakes),
+                "hesitation_rows": sorted(row + 1 for row in hesitations),
                 "choreography": profile["name"],
                 "mood": mood,
                 "voice": voice_lines,
                 "voice_timing": [
-                    {"at": round(start, 2), "line": voice_lines[clips.index(_clip)]}
+                    {"at": round(start, 2), "line": clip_lines[_clip]}
                     for start, _clip in audio_events
+                    if _clip in clip_lines
                 ],
                 "output": str(VIDEO_OUT),
             },
