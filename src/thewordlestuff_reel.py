@@ -41,13 +41,33 @@ KEY_BG = "#d3d6da"
 KEY_ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"]
 
 EDGE_VOICES = [
-    "en-US-JennyNeural",
-    "en-US-GuyNeural",
-    "en-US-AriaNeural",
-    "en-US-DavisNeural",
-    "en-US-NancyNeural",
-    "en-US-SteffanNeural",
+    "en-US-AvaNeural",
+    "en-US-AndrewNeural",
+    "en-US-EmmaNeural",
+    "en-US-BrianNeural",
 ]
+
+# Per-beat prosody: solve-moment beat -> (rate, pitch) for edge-tts. Lets one solver
+# voice ride the tension and payoff instead of reading every line at one flat speed.
+EDGE_BEAT_PROSODY = {
+    "opener": ("+0%", "+0Hz"),
+    "calm": ("+0%", "+0Hz"),
+    "uncertain": ("-5%", "-1Hz"),
+    "rushed": ("+13%", "+3Hz"),
+    "tense": ("+8%", "+2Hz"),
+    "locked_in": ("+3%", "+1Hz"),
+    "flat": ("-3%", "-2Hz"),
+    "curious": ("+2%", "+1Hz"),
+    "good": ("+5%", "+2Hz"),
+    "excited": ("+11%", "+4Hz"),
+    "triumphant": ("+2%", "+2Hz"),
+}
+# Kokoro fallback has no pitch control, so map the same beats to speed only.
+KOKORO_BEAT_SPEED = {
+    "opener": 0.98, "calm": 0.98, "uncertain": 0.92, "rushed": 1.15, "tense": 1.08,
+    "locked_in": 1.02, "flat": 0.95, "curious": 1.0, "good": 1.04, "excited": 1.1,
+    "triumphant": 1.0,
+}
 
 KOKORO_VOICES = [
     "af_heart",
@@ -277,32 +297,33 @@ def voice_text(text):
 
 
 def voice_before_guess(guess, answer, turn, total_turns, rng, has_mistype=False, previous_guesses=None, mood="calm", used_strategy_letters=None):
+    # Returns (text, beat). beat drives per-line prosody in make_voice_clip.
     if guess == answer:
         if turn == 1:
-            return f"{spoken_word(answer)} first. Why not."
+            return f"{spoken_word(answer)} first. Why not.", "locked_in"
         if turn == 2:
-            return f"Could just be {spoken_word(answer)}."
+            return f"Could just be {spoken_word(answer)}.", "locked_in"
         if turn == total_turns and turn >= 5:
-            return f"No more overthinking. {spoken_word(answer)}."
-        return f"I think it's {spoken_word(answer)}."
+            return f"No more overthinking. {spoken_word(answer)}.", "locked_in"
+        return f"I think it's {spoken_word(answer)}.", "locked_in"
     if turn == 1:
         word = spoken_word(guess)
-        return rng.choice([f"{word.capitalize()} first.", f"Let's start {word}.", f"I'll open with {word}."])
+        return rng.choice([f"{word.capitalize()} first.", f"Let's start {word}.", f"I'll open with {word}."]), "opener"
     if total_turns >= 6 and turn >= 5:
-        return f"Running out of room. {spoken_word(guess)}."
+        return f"Running out of room. {spoken_word(guess)}.", "rushed"
     if has_mistype:
-        return f"{rng.choice(['Wait', 'Actually', 'Hold on'])}... no. {spoken_word(guess)}."
+        return f"{rng.choice(['Wait', 'Actually', 'Hold on'])}... no. {spoken_word(guess)}.", "uncertain"
     strategy = strategy_line(guess, answer, previous_guesses or [], rng, used_strategy_letters)
     if strategy:
-        return strategy
+        return strategy, mood
     if mood == "rushed" and rng.random() < 0.45:
-        return f"{spoken_word(guess)}."
+        return f"{spoken_word(guess)}.", "rushed"
     if mood == "uncertain" and rng.random() < 0.45:
-        return f"Maybe {spoken_word(guess)}."
+        return f"Maybe {spoken_word(guess)}.", "uncertain"
     if rng.random() < 0.28:
-        return f"{rng.choice(VOICE_HESITATIONS)}... {spoken_word(guess)}."
+        return f"{rng.choice(VOICE_HESITATIONS)}... {spoken_word(guess)}.", "uncertain"
     openers = ["Try", "Maybe", "What about", "Let's check"]
-    return f"{rng.choice(openers)} {spoken_word(guess)}."
+    return f"{rng.choice(openers)} {spoken_word(guess)}.", mood
 
 
 def choose_reaction(category, rng, used_reactions):
@@ -321,30 +342,31 @@ def spoken_reaction(category, rng, used_reactions):
 
 
 def voice_after_guess(guess, answer, turn, total_turns, rng, used_reactions=None):
+    # Returns (text, beat). beat drives per-line prosody in make_voice_clip.
     used_reactions = used_reactions if used_reactions is not None else set()
     if guess == answer:
         if turn == 1:
-            return f"No way. First try."
+            return f"No way. First try.", "triumphant"
         if turn == 2:
-            return f"Second try. I'll take that."
+            return f"Second try. I'll take that.", "triumphant"
         if turn >= 6:
-            return f"Finally. Last try."
+            return f"Finally. Last try.", "triumphant"
         if turn >= 5:
-            return f"That was close. Got it."
-        return f"{rng.choice(['Yep', 'There we go', 'Nice'])}. Got it."
+            return f"That was close. Got it.", "triumphant"
+        return f"{rng.choice(['Yep', 'There we go', 'Nice'])}. Got it.", "triumphant"
     score = score_guess(guess, answer)
     greens = score.count("correct")
     yellows = score.count("present")
     filler = rng.choice(VOICE_FILLERS)
     if total_turns >= 6 and turn >= 5 and greens + yellows < 3:
-        return f"{filler}, that's not enough. This is getting tight."
+        return f"{filler}, that's not enough. This is getting tight.", "tense"
     if greens >= 3 or greens + yellows >= 4:
-        return spoken_reaction("close", rng, used_reactions)
+        return spoken_reaction("close", rng, used_reactions), "excited"
     if greens >= 2 or greens + yellows >= 3:
-        return spoken_reaction("good", rng, used_reactions)
+        return spoken_reaction("good", rng, used_reactions), "good"
     if greens + yellows >= 1:
-        return spoken_reaction("some", rng, used_reactions)
-    return spoken_reaction("miss", rng, used_reactions)
+        return spoken_reaction("some", rng, used_reactions), "curious"
+    return spoken_reaction("miss", rng, used_reactions), "flat"
 
 
 def tile_color(state):
@@ -460,15 +482,16 @@ def draw_frame(
     return img
 
 
-async def edge_voice(text, out_path, voice_index):
+async def edge_voice(text, out_path, voice_index, beat="calm"):
     deps = ROOT / ".deps"
     if deps.exists():
         sys.path.insert(0, str(deps))
     import edge_tts
 
     voice = EDGE_VOICES[voice_index % len(EDGE_VOICES)]
+    rate, pitch = EDGE_BEAT_PROSODY.get(beat, EDGE_BEAT_PROSODY["calm"])
     mp3 = out_path.with_suffix(".mp3")
-    communicate = edge_tts.Communicate(text, voice=voice, rate="-5%", pitch="-1Hz")
+    communicate = edge_tts.Communicate(text, voice=voice, rate=rate, pitch=pitch)
     await communicate.save(str(mp3))
     subprocess.run(
         ["ffmpeg", "-y", "-i", str(mp3), "-ar", "44100", "-ac", "1", "-acodec", "pcm_s16le", str(out_path)],
@@ -479,7 +502,7 @@ async def edge_voice(text, out_path, voice_index):
     mp3.unlink(missing_ok=True)
 
 
-def kokoro_voice(text, out_path, voice_index):
+def kokoro_voice(text, out_path, voice_index, beat="calm"):
     global KOKORO_PIPELINE
     dep_paths = [Path(p) for p in os.getenv("TTS_DEPS_DIR", "").split(os.pathsep) if p]
     dep_paths.append(ROOT / ".deps")
@@ -496,7 +519,7 @@ def kokoro_voice(text, out_path, voice_index):
 
     raw = out_path.with_suffix(".kokoro.wav")
     voice = KOKORO_VOICES[voice_index % len(KOKORO_VOICES)]
-    speed = [0.96, 1.0, 0.98, 1.03, 0.94, 1.01][voice_index % 6]
+    speed = KOKORO_BEAT_SPEED.get(beat, 0.98)
     chunks = []
     generator = KOKORO_PIPELINE(voice_text(text), voice=voice, speed=speed, split_pattern=r"\n+")
     for _graphemes, _phonemes, audio in generator:
@@ -538,20 +561,21 @@ def soften_clip(path):
     tmp.replace(path)
 
 
-def make_voice_clip(text, out_path, voice_index):
-    if os.getenv("TTS_ENGINE", "kokoro").lower() == "kokoro":
+def make_voice_clip(text, out_path, voice_index, beat="calm"):
+    # edge-tts is the primary voice (warmer/more natural here); kokoro is a fallback.
+    # Set TTS_ENGINE=kokoro to prefer kokoro instead.
+    engine = os.getenv("TTS_ENGINE", "edge").lower()
+    order = ["kokoro", "edge"] if engine == "kokoro" else ["edge", "kokoro"]
+    for eng in order:
         try:
-            kokoro_voice(text, out_path, voice_index)
+            if eng == "edge":
+                asyncio.run(edge_voice(text, out_path, voice_index, beat))
+            else:
+                kokoro_voice(text, out_path, voice_index, beat)
             soften_clip(out_path)
             return
         except Exception as exc:
-            print(f"kokoro unavailable, falling back to edge-tts: {exc}")
-    try:
-        asyncio.run(edge_voice(text, out_path, voice_index))
-        soften_clip(out_path)
-        return
-    except Exception as exc:
-        print(f"edge-tts unavailable, falling back to system voice: {exc}")
+            print(f"{eng} unavailable, falling back: {exc}")
     if shutil.which("say"):
         aiff = out_path.with_suffix(".aiff")
         mac_voices = ["Samantha", "Alex", "Ava", "Tom"]
@@ -698,23 +722,26 @@ def main():
     mistakes = mistype_plan(guesses, words, rng)
     hesitations = hesitation_plan(guesses, mistakes, rng)
     voice_lines = [f"{rng.choice(VOICE_OPENERS)} Wordle number {puzzle['id']}."]
+    voice_beats = ["opener"]
     used_strategy_letters = set()
     used_reactions = set()
     for i, guess in enumerate(guesses, 1):
-        voice_lines.append(
-            voice_before_guess(
-                guess,
-                answer,
-                i,
-                len(guesses),
-                rng,
-                i - 1 in mistakes,
-                guesses[: i - 1],
-                mood,
-                used_strategy_letters,
-            )
+        before_text, before_beat = voice_before_guess(
+            guess,
+            answer,
+            i,
+            len(guesses),
+            rng,
+            i - 1 in mistakes,
+            guesses[: i - 1],
+            mood,
+            used_strategy_letters,
         )
-        voice_lines.append(voice_after_guess(guess, answer, i, len(guesses), rng, used_reactions))
+        voice_lines.append(before_text)
+        voice_beats.append(before_beat)
+        after_text, after_beat = voice_after_guess(guess, answer, i, len(guesses), rng, used_reactions)
+        voice_lines.append(after_text)
+        voice_beats.append(after_beat)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -734,7 +761,7 @@ def main():
         clip_lines = {}
         for i, line in enumerate(voice_lines):
             clip = clips_dir / f"voice_{i:02d}.wav"
-            make_voice_clip(line, clip, puzzle["id"])
+            make_voice_clip(line, clip, puzzle["id"], voice_beats[i])
             clips.append(clip)
             clip_lines[clip] = line
             clip_durations.append(wav_duration(clip))
