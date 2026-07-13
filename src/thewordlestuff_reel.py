@@ -818,11 +818,19 @@ def main():
             frame_no += 1
 
         voice_index = 0
-        audio_events.append((0.12, clips[voice_index]))
+        next_voice_at = 0.0
+
+        def queue_voice(idx, intended):
+            nonlocal next_voice_at
+            start = max(intended, next_voice_at)
+            audio_events.append((start, clips[idx]))
+            next_voice_at = start + clip_durations[idx] + 0.14
+
+        queue_voice(voice_index, 0.12)
         voice_index += 1
         add_frames(1.05, 0, 0, 0, cursor=True)
         for row, _guess in enumerate(guesses):
-            audio_events.append((frame_no / FPS + 0.05, clips[voice_index]))
+            queue_voice(voice_index, frame_no / FPS + 0.05)
             voice_index += 1
             thinking = profile["pre"][0] + rng.random() * profile["pre"][1]
             if profile["name"] == "thoughtful" and rng.random() < 0.55:
@@ -861,7 +869,7 @@ def main():
             for letters in range(1, 6):
                 add_sfx("reveal")
                 add_frames(profile["reveal"][0] + rng.random() * profile["reveal"][1], row, 5, letters)
-            audio_events.append((frame_no / FPS + 0.10, clips[voice_index]))
+            queue_voice(voice_index, frame_no / FPS + 0.10)
             after_clip_duration = clip_durations[voice_index]
             voice_index += 1
             hold_base = profile["final_hold"] if _guess == answer else profile["hold"]
